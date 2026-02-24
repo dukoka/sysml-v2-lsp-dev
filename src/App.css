@@ -1,0 +1,110 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-color: #1e1e1e;
+  color: #fff;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 24px;
+  background-color: #252526;
+  border-bottom: 1px solid #3c3c3c;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header h1 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.badge {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  background-color: #007acc;
+  color: #fff;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.controls {
+  display: flex;
+  gap: 16px;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.control-group label {
+  font-size: 14px;
+  color: #cccccc;
+}
+
+.control-group select {
+  padding: 6px 12px;
+  font-size: 14px;
+  background-color: #3c3c3c;
+  color: #fff;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+
+.control-group select:hover {
+  border-color: #007acc;
+}
+
+.control-group select:focus {
+  border-color: #007acc;
+  box-shadow: 0 0 0 1px #007acc;
+}
+
+.control-group input[type="checkbox"] {
+  margin-right: 6px;
+}
+
+.editor-container {
+  flex: 1;
+  overflow: hidden;
+}
+
+.footer {
+  padding: 8px 24px;
+  background-color: #252526;
+  border-top: 1px solid #3c3c3c;
+  font-size: 12px;
+  color: #888;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.footer .separator {
+  color: #555;
+}
