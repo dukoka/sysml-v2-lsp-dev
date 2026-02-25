@@ -256,18 +256,104 @@ const validateText = (text: string): ValidationResult[] => {
     }
 
     // Check for invalid identifier patterns
-    const identifierMatch = line.match(/(\d+)([a-zA-Z_][a-zA-Z0-9_]*)/g);
-    if (identifierMatch) {
-      identifierMatch.forEach(match => {
-        const startIndex = line.indexOf(match);
+    let badIdM;
+    const badIdRegex = /\b(\d+[a-zA-Z_][a-zA-Z0-9_]*)\b/g;
+    while ((badIdM = badIdRegex.exec(line)) !== null) {
+      results.push({
+        severity: monaco.MarkerSeverity.Error,
+        message: 'Invalid identifier: cannot start with a number',
+        startLine: lineNum,
+        startColumn: badIdM.index + 1,
+        endLine: lineNum,
+        endColumn: badIdM.index + badIdM[0].length + 1
+      });
+    }
+
+    // Malformed definition: missing name before {
+    if (/^\s*(part|port|action|state|flow|item|connection|constraint|actor|behavior)\s+def\s*\{\s*$/i.test(trimmedLine)) {
+      results.push({
+        severity: monaco.MarkerSeverity.Error,
+        message: 'Definition missing name before opening brace',
+        startLine: lineNum,
+        startColumn: 1,
+        endLine: lineNum,
+        endColumn: line.length + 1
+      });
+    }
+    if (/^\s*(part|port|action|state|flow|item|connection|constraint|actor|behavior)\s+def\s*$/.test(trimmedLine)) {
+      results.push({
+        severity: monaco.MarkerSeverity.Error,
+        message: 'Definition missing name and body',
+        startLine: lineNum,
+        startColumn: 1,
+        endLine: lineNum,
+        endColumn: line.length + 1
+      });
+    }
+
+    // Double semicolon
+    let semiM;
+    const semiRegex = /;;+/g;
+    while ((semiM = semiRegex.exec(line)) !== null) {
+      results.push({
+        severity: monaco.MarkerSeverity.Warning,
+        message: 'Redundant semicolons',
+        startLine: lineNum,
+        startColumn: semiM.index + 1,
+        endLine: lineNum,
+        endColumn: semiM.index + semiM[0].length + 1
+      });
+    }
+
+    // Standalone "def" without structural keyword
+    if (/^\s*def\s+\w+/i.test(trimmedLine) && !/^\s*(part|port|action|state|flow|item|connection|constraint|actor|behavior)\s+def/i.test(trimmedLine)) {
+      const defMatch = line.match(/\bdef\b/i);
+      if (defMatch && defMatch.index !== undefined) {
         results.push({
           severity: monaco.MarkerSeverity.Error,
-          message: `Invalid identifier: cannot start with a number`,
+          message: "'def' must follow a structural keyword (part, port, action, etc.)",
           startLine: lineNum,
-          startColumn: startIndex + 1,
+          startColumn: defMatch.index + 1,
           endLine: lineNum,
-          endColumn: startIndex + match.length + 1
+          endColumn: defMatch.index + 4
         });
+      }
+    }
+  });
+
+  // Duplicate definition names
+  const defNames = new Map<string, number[]>();
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('//') || trimmed.startsWith('/*')) return;
+    const m = line.match(/^\s*(?:part|port|action|state|flow|item|connection|constraint|actor|behavior)\s+def\s+(\w+)/i)
+      || line.match(/^\s*requirement\s+(\w+)/i)
+      || line.match(/^\s*enum\s+(\w+)/i)
+      || line.match(/^\s*struct\s+(\w+)/i)
+      || line.match(/^\s*datatype\s+(\w+)/i)
+      || line.match(/^\s*package\s+(\w+)/i);
+    if (m && m[1]) {
+      const name = m[1];
+      if (!defNames.has(name)) defNames.set(name, []);
+      defNames.get(name)!.push(idx + 1);
+    }
+  });
+  defNames.forEach((lineNums, name) => {
+    if (lineNums.length > 1) {
+      lines.forEach((line, idx) => {
+        const lineNum = idx + 1;
+        if (!lineNums.includes(lineNum)) return;
+        const nameMatch = line.match(new RegExp(`\\b${name}\\b`));
+        if (nameMatch && nameMatch.index !== undefined) {
+          results.push({
+            severity: monaco.MarkerSeverity.Warning,
+            message: `Duplicate definition '${name}' (also at line ${lineNums.filter((l) => l !== lineNum).join(', ')})`,
+            startLine: lineNum,
+            startColumn: nameMatch.index + 1,
+            endLine: lineNum,
+            endColumn: nameMatch.index + name.length + 1
+          });
+        }
       });
     }
   });

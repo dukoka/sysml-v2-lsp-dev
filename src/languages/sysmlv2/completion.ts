@@ -152,8 +152,8 @@ function detectCompletionContext(model: monaco.editor.ITextModel, position: mona
     return { type: 'definitionStart', currentWord, braceDepth };
   }
   
-  // After keyword + def (e.g., "part def ")
-  if (new RegExp(`^(${structuralPattern})\\s+def\\s+`, 'i').test(trimmed)) {
+  // After keyword + def (e.g., "part def " or "part def")
+  if (new RegExp(`^(${structuralPattern})\\s+def\\s*`, 'i').test(trimmed)) {
     return { type: 'defName', currentWord, braceDepth };
   }
   
@@ -194,7 +194,6 @@ export const sysmlv2CompletionProvider: monaco.languages.CompletionItemProvider 
     };
 
     const ctx = detectCompletionContext(model, position);
-    console.log('Completion:', ctx.type, 'word:', ctx.currentWord);
 
     const suggestions: monaco.languages.CompletionItem[] = [];
     let sortPriority = 0;

@@ -28,6 +28,72 @@ requirement SpeedReq {
   // Requirements here
 }`;
 
+// Normalize bracket spacing (align with SysML style: space before {, space after })
+function normalizeBracketSpacing(line: string): string {
+  // Skip strings and comments - apply to code portions only
+  let out = '';
+  let i = 0;
+  let inString = false;
+  let stringChar = '';
+  let inComment = false;
+  let inBlockComment = false;
+  while (i < line.length) {
+    if (inBlockComment) {
+      if (line.substring(i, i + 2) === '*/') {
+        inBlockComment = false;
+        out += '*/';
+        i += 2;
+        continue;
+      }
+      out += line[i++];
+      continue;
+    }
+    if (line.substring(i, i + 2) === '/*') {
+      inBlockComment = true;
+      out += '/*';
+      i += 2;
+      continue;
+    }
+    if (!inString && line.substring(i, i + 2) === '//') {
+      out += line.substring(i);
+      break;
+    }
+    if (!inString && (line[i] === '"' || line[i] === "'")) {
+      inString = true;
+      stringChar = line[i];
+      out += line[i++];
+      continue;
+    }
+    if (inString) {
+      if (line[i] === '\\' && i + 1 < line.length) {
+        out += line[i++] + line[i++];
+        continue;
+      }
+      if (line[i] === stringChar) inString = false;
+      out += line[i++];
+      continue;
+    }
+    // Space before { when preceded by word/identifier
+    if (line[i] === '{' && out.length > 0 && /\w$/.test(out)) {
+      out += ' {';
+      i++;
+      continue;
+    }
+    // Space after } when followed by word (e.g. } else)
+    if (out.length > 0 && out.endsWith('}') && /\w/.test(line[i])) {
+      out += ' ';
+    }
+    // Space between } and {
+    if (line[i] === '}' && i + 1 < line.length && line[i + 1] === '{') {
+      out += '} {';
+      i += 2;
+      continue;
+    }
+    out += line[i++];
+  }
+  return out;
+}
+
 // SysMLv2 Code Formatter
 function formatSysmlv2Code(text: string, options: monaco.languages.FormattingOptions): string {
   const lines = text.split('\n');
@@ -35,12 +101,15 @@ function formatSysmlv2Code(text: string, options: monaco.languages.FormattingOpt
   const tabSize = options.tabSize || 2;
   const indentChar = options.insertSpaces ? ' ' : '\t';
   
+  // Normalize bracket spacing on each line first
+  const normalizedLines = lines.map(line => normalizeBracketSpacing(line));
+  
   // Calculate indent for each line using brace counting
   const baseIndents: number[] = [];
   let braceDepth = 0;
   
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  for (let i = 0; i < normalizedLines.length; i++) {
+    const line = normalizedLines[i];
     const trimmed = line.trim();
     
     if (trimmed === '') {
@@ -66,8 +135,8 @@ function formatSysmlv2Code(text: string, options: monaco.languages.FormattingOpt
   }
   
   // Build formatted result
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  for (let i = 0; i < normalizedLines.length; i++) {
+    const line = normalizedLines[i];
     const trimmed = line.trim();
     
     if (trimmed === '') {
