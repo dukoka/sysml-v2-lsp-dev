@@ -145,14 +145,23 @@ function CodeEditor({
               await client.updateDocument(content, version);
               const items = await client.getDiagnostics();
               const markers: monaco.editor.IMarkerData[] = (items || []).map(
-                (item: { range: { startLine: number; startColumn: number; endLine: number; endColumn: number }; severity?: number; message: string }) => ({
-                  startLineNumber: item.range.startLine,
-                  startColumn: item.range.startColumn,
-                  endLineNumber: item.range.endLine,
-                  endColumn: item.range.endColumn,
-                  message: item.message,
-                  severity: item.severity === 8 ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
-                })
+                (item: {
+                  range: { start?: { line: number; character: number }; end?: { line: number; character: number }; startLine?: number; startColumn?: number; endLine?: number; endColumn?: number };
+                  severity?: number;
+                  message: string;
+                }) => {
+                  const r = item.range;
+                  const start = r.start !== undefined ? { line: r.start.line + 1, col: r.start.character + 1 } : { line: r.startLine!, col: r.startColumn! };
+                  const end = r.end !== undefined ? { line: r.end.line + 1, col: r.end.character + 1 } : { line: r.endLine!, col: r.endColumn! };
+                  return {
+                    startLineNumber: start.line,
+                    startColumn: start.col,
+                    endLineNumber: end.line,
+                    endColumn: end.col,
+                    message: item.message,
+                    severity: (item.severity === 1 || item.severity === 8) ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+                  };
+                }
               );
               monaco.editor.setModelMarkers(model, 'sysmlv2', []);
               monaco.editor.setModelMarkers(model, 'sysmlv2-lsp', markers);

@@ -1,57 +1,30 @@
 // SysMLv2 Language Server Web Worker
-// This worker handles LSP requests in a background thread
+// Uses vscode-languageserver createConnection + BrowserMessageReader/Writer
 
-// Import types (will be handled by TypeScript during build)
 /// <reference lib="webworker" />
 
-interface LSPMessage {
-  jsonrpc: string;
-  id?: number | string;
-  method?: string;
-  params?: any;
-}
+import {
+  createConnection,
+  BrowserMessageReader,
+  BrowserMessageWriter,
+  TextDocuments,
+  ProposedFeatures,
+  TextDocumentSyncKind,
+  InitializeResult,
+  CompletionItem,
+  CompletionItemKind,
+  DocumentDiagnosticReportKind,
+  type DocumentDiagnosticReport,
+  DiagnosticSeverity,
+  type Diagnostic
+} from 'vscode-languageserver/browser';
+import { TextDocument } from 'vscode-languageserver-textdocument';
+import { parseSysML, parseResultToDiagnostics } from '../grammar/parser.js';
 
-interface LSPResponse {
-  jsonrpc: string;
-  id?: number | string;
-  result?: any;
-  error?: {
-    code: number;
-    message: string;
-    data?: any;
-  };
-}
+// Document store (managed by TextDocuments)
+const documents = new TextDocuments(TextDocument);
 
-// Simple document state
-interface DocumentState {
-  uri: string;
-  content: string;
-  version: number;
-}
-
-// Document store
-const documents = new Map<string, DocumentState>();
-
-// Handle all messages: init (optional) or JSON-RPC request/notification
-self.onmessage = (event: MessageEvent) => {
-  const data = event.data;
-
-  // Optional init for config (e.g. documentUri); no response
-  if (data && data.type === 'init') {
-    return;
-  }
-
-  // LSP JSON-RPC: method + optional id (request) or notification
-  if (data && typeof data.method === 'string') {
-    const response = handleRequest(data as LSPMessage);
-    // Only send response for requests (with id); notifications have id undefined
-    if (response.id !== undefined) {
-      self.postMessage(response);
-    }
-  }
-};
-
-// SysMLv2 keywords (aligned with validator.ts)
+// SysMLv2 keywords
 const SYSMLV2_KEYWORDS = [
   'import', 'package', 'library', 'alias',
   'def', 'definition', 'abstract', 'specialization',
@@ -121,50 +94,47 @@ function findSimilarKeyword(word: string): string | null {
   return similar;
 }
 
-// Validation logic
-const validateDocument = (doc: DocumentState): any[] => {
-  const markers: any[] = [];
-  const lines = doc.content.split('\n');
-  const userDefinedTypes = extractUserDefinedTypes(doc.content);
+function validateDocument(text: string): Diagnostic[] {
+  const markers: Diagnostic[] = [];
+
+  // AST-based diagnostics from Langium parser (parser/lexer errors)
+  try {
+    const parseResult = parseSysML(text);
+    markers.push(...parseResultToDiagnostics(parseResult));
+  } catch {
+    // Parser init or runtime error - continue with regex-based validation
+  }
+
+  const lines = text.split('\n');
+  const userDefinedTypes = extractUserDefinedTypes(text);
 
   lines.forEach((line, lineIndex) => {
     const lineNum = lineIndex + 1;
     const trimmedLine = line.trim();
 
-    // Skip empty lines
     if (trimmedLine === '') return;
     if (trimmedLine.startsWith('//') || trimmedLine.startsWith('/*')) return;
     if (trimmedLine === '{' || trimmedLine === '}') return;
     if (trimmedLine.startsWith('end')) return;
     if (trimmedLine.endsWith('{')) return;
 
-    // Missing semicolon
-    const needsSemicolon =
-      /^\s*(attribute|part|port|reference)\s+\w+/.test(trimmedLine) ||
-      /^\s*\w+\s*[=:]/.test(trimmedLine) ||
-      /^\s*(println|print|assert)\s*\(/.test(trimmedLine);
-    const looksLikeStatement =
-      /^\s*\w+\s*\(/.test(trimmedLine) ||
-      /^\s*\w+\s*[=+\-*/]/.test(trimmedLine) ||
-      /^\s*\w+\s*:\s*\w+/.test(trimmedLine);
-    const hasValidEnding =
-      trimmedLine.endsWith(';') || trimmedLine.endsWith(',') ||
-      trimmedLine.endsWith('{') || trimmedLine.endsWith('}');
-    if ((needsSemicolon || looksLikeStatement) && !hasValidEnding) {
-      const firstWord = trimmedLine.split(/\s+/)[0];
-      if (SYSMLV2_KEYWORDS.includes(firstWord)) {
-        markers.push({
-          severity: 4,
-          message: 'Missing semicolon',
-          startLine: lineNum,
-          startColumn: line.length,
-          endLine: lineNum,
-          endColumn: line.length + 1
-        });
+    const toRange = (startCol: number, endCol: number) => ({
+      start: { line: lineNum - 1, character: startCol - 1 },
+      end: { line: lineNum - 1, character: endCol - 1 }
+    });
+
+    if (!trimmedLine.endsWith(';') && !trimmedLine.endsWith(',') && !trimmedLine.endsWith('{') && !trimmedLine.endsWith('}')) {
+      const needsSemicolon = /^\s*(attribute|part|port|reference)\s+\w+/.test(trimmedLine) ||
+        /^\s*\w+\s*[=:]/.test(trimmedLine) || /^\s*(println|print|assert)\s*\(/.test(trimmedLine);
+      const looksLikeStatement = /^\s*\w+\s*\(/.test(trimmedLine) || /^\s*\w+\s*[=+\-*/]/.test(trimmedLine) || /^\s*\w+\s*:\s*\w+/.test(trimmedLine);
+      if ((needsSemicolon || looksLikeStatement)) {
+        const firstWord = trimmedLine.split(/\s+/)[0];
+        if (SYSMLV2_KEYWORDS.includes(firstWord)) {
+          markers.push({ severity: DiagnosticSeverity.Warning, range: toRange(line.length, line.length + 1), message: 'Missing semicolon' });
+        }
       }
     }
 
-    // Unknown identifiers (standalone word on line)
     const cleanLine = line.replace(/\/\/.*$/, '').replace(/"[^"]*"/g, '').replace(/'[^']*'/g, '');
     const wordRegex = /\b[a-zA-Z_][a-zA-Z0-9_]*\b/g;
     let match;
@@ -181,130 +151,56 @@ const validateDocument = (doc: DocumentState): any[] => {
       if (!looksLikeStmt && !isTypeAnnotation) {
         const similar = findSimilarKeyword(word);
         if (similar) {
-          markers.push({
-            severity: 8,
-            message: `Unknown keyword '${word}'. Did you mean '${similar}'?`,
-            startLine: lineNum,
-            startColumn: startCol,
-            endLine: lineNum,
-            endColumn: startCol + word.length
-          });
+          markers.push({ severity: DiagnosticSeverity.Error, range: toRange(startCol, startCol + word.length), message: `Unknown keyword '${word}'. Did you mean '${similar}'?` });
         } else if (trimmedLine === word) {
-          markers.push({
-            severity: 8,
-            message: `Expected a token. Did you forget ';'?`,
-            startLine: lineNum,
-            startColumn: startCol,
-            endLine: lineNum,
-            endColumn: startCol + word.length
-          });
+          markers.push({ severity: DiagnosticSeverity.Error, range: toRange(startCol, startCol + word.length), message: `Expected a token. Did you forget ';'?` });
         }
       }
     }
 
-    // Check for unclosed strings
     let inString = false;
     let stringChar = '';
     for (let i = 0; i < line.length; i++) {
       const char = line[i];
-      if (!inString && (char === '"' || char === "'")) {
-        inString = true;
-        stringChar = char;
-      } else if (inString && char === stringChar && line[i - 1] !== '\\') {
-        inString = false;
-      }
+      if (!inString && (char === '"' || char === "'")) { inString = true; stringChar = char; }
+      else if (inString && char === stringChar && line[i - 1] !== '\\') inString = false;
     }
     if (inString) {
-      markers.push({
-        severity: 8, // Error
-        message: 'Unclosed string literal',
-        startLine: lineNum,
-        startColumn: 1,
-        endLine: lineNum,
-        endColumn: line.length + 1
-      });
+      markers.push({ severity: DiagnosticSeverity.Error, range: toRange(1, line.length + 1), message: 'Unclosed string literal' });
     }
 
-    // Check for unclosed comments
     if (line.includes('/*') && !line.includes('*/') && !line.includes('//')) {
       const commentStart = line.indexOf('/*');
-      markers.push({
-        severity: 4, // Warning
-        message: 'Potentially unclosed block comment',
-        startLine: lineNum,
-        startColumn: commentStart + 1,
-        endLine: lineNum,
-        endColumn: line.length
-      });
+      markers.push({ severity: DiagnosticSeverity.Warning, range: toRange(commentStart + 1, line.length), message: 'Potentially unclosed block comment' });
     }
 
-    // Invalid identifier: cannot start with number
     let badIdM;
     const badIdRegex = /\b(\d+[a-zA-Z_][a-zA-Z0-9_]*)\b/g;
     while ((badIdM = badIdRegex.exec(line)) !== null) {
-      markers.push({
-        severity: 8,
-        message: 'Invalid identifier: cannot start with a number',
-        startLine: lineNum,
-        startColumn: badIdM.index + 1,
-        endLine: lineNum,
-        endColumn: badIdM.index + badIdM[0].length + 1
-      });
+      markers.push({ severity: DiagnosticSeverity.Error, range: toRange(badIdM.index + 1, badIdM.index + badIdM[0].length + 1), message: 'Invalid identifier: cannot start with a number' });
     }
 
-    // Malformed definition: "part def {" or "part def" at end without name
     if (/^\s*(part|port|action|state|flow|item|connection|constraint|actor|behavior)\s+def\s*\{\s*$/i.test(trimmedLine)) {
-      markers.push({
-        severity: 8,
-        message: 'Definition missing name before opening brace',
-        startLine: lineNum,
-        startColumn: 1,
-        endLine: lineNum,
-        endColumn: trimmedLine.length + 1
-      });
+      markers.push({ severity: DiagnosticSeverity.Error, range: toRange(1, trimmedLine.length + 1), message: 'Definition missing name before opening brace' });
     }
     if (/^\s*(part|port|action|state|flow|item|connection|constraint|actor|behavior)\s+def\s*$/.test(trimmedLine)) {
-      markers.push({
-        severity: 8,
-        message: 'Definition missing name and body',
-        startLine: lineNum,
-        startColumn: 1,
-        endLine: lineNum,
-        endColumn: trimmedLine.length + 1
-      });
+      markers.push({ severity: DiagnosticSeverity.Error, range: toRange(1, trimmedLine.length + 1), message: 'Definition missing name and body' });
     }
 
-    // Double semicolon
     let semiM;
     const semiRegex = /;;+/g;
     while ((semiM = semiRegex.exec(line)) !== null) {
-      markers.push({
-        severity: 4,
-        message: 'Redundant semicolons',
-        startLine: lineNum,
-        startColumn: semiM.index + 1,
-        endLine: lineNum,
-        endColumn: semiM.index + semiM[0].length + 1
-      });
+      markers.push({ severity: DiagnosticSeverity.Warning, range: toRange(semiM.index + 1, semiM.index + semiM[0].length + 1), message: 'Redundant semicolons' });
     }
 
-    // Standalone "def" without structural keyword
     if (/^\s*def\s+\w+/i.test(trimmedLine) && !/^\s*(part|port|action|state|flow|item|connection|constraint|actor|behavior)\s+def/i.test(trimmedLine)) {
       const defMatch = line.match(/\bdef\b/i);
       if (defMatch && defMatch.index !== undefined) {
-        markers.push({
-          severity: 8,
-          message: "'def' must follow a structural keyword (part, port, action, etc.)",
-          startLine: lineNum,
-          startColumn: defMatch.index + 1,
-          endLine: lineNum,
-          endColumn: defMatch.index + 4
-        });
+        markers.push({ severity: DiagnosticSeverity.Error, range: toRange(defMatch.index + 1, defMatch.index + 4), message: "'def' must follow a structural keyword (part, port, action, etc.)" });
       }
     }
   });
 
-  // Duplicate definition names
   const defNames = new Map<string, number[]>();
   lines.forEach((line, idx) => {
     const m = line.match(/^\s*(?:part|port|action|state|flow|item|connection|constraint|actor|behavior)\s+def\s+(\w+)/i)
@@ -324,244 +220,66 @@ const validateDocument = (doc: DocumentState): any[] => {
       lineNums.forEach((ln) => {
         const line = lines[ln - 1];
         const col = (line.match(new RegExp(`\\b${name}\\b`))?.index ?? 0) + 1;
-        markers.push({
-          severity: 4,
-          message: `Duplicate definition '${name}' (also at line ${lineNums.filter((l) => l !== ln).join(', ')})`,
-          startLine: ln,
-          startColumn: col,
-          endLine: ln,
-          endColumn: col + name.length
-        });
+        markers.push({ severity: DiagnosticSeverity.Warning, range: { start: { line: ln - 1, character: col - 1 }, end: { line: ln - 1, character: col + name.length - 1 } }, message: `Duplicate definition '${name}' (also at line ${lineNums.filter((l) => l !== ln).join(', ')})` });
       });
     }
   });
 
-  // Check for unmatched braces
-  const openBraces = (doc.content.match(/{/g) || []).length;
-  const closeBraces = (doc.content.match(/}/g) || []).length;
+  const openBraces = (text.match(/{/g) || []).length;
+  const closeBraces = (text.match(/}/g) || []).length;
   if (openBraces !== closeBraces) {
-    markers.push({
-      severity: 8,
-      message: `Unmatched braces: ${openBraces} open, ${closeBraces} close`,
-      startLine: 1,
-      startColumn: 1,
-      endLine: lines.length,
-      endColumn: 1
-    });
+    markers.push({ severity: DiagnosticSeverity.Error, range: { start: { line: 0, character: 0 }, end: { line: lines.length - 1, character: 0 } }, message: `Unmatched braces: ${openBraces} open, ${closeBraces} close` });
   }
 
   return markers;
-};
+}
 
-// Handle LSP requests
-const handleRequest = (message: LSPMessage): LSPResponse => {
-  const { method, params, id } = message;
+// Create connection with Browser transport
+const reader = new BrowserMessageReader(self as any);
+const writer = new BrowserMessageWriter(self as any);
+const connection = createConnection(ProposedFeatures.all, reader, writer);
 
-  try {
-    switch (method) {
-      case 'initialize': {
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: {
-            capabilities: {
-              textDocumentSync: 1, // Full document sync
-              completionProvider: {
-                triggerCharacters: ['.', ':', '(', '['],
-                resolveProvider: false
-              },
-              hoverProvider: true,
-              foldingRangeProvider: true,
-              diagnosticProvider: {
-                interFileDependencies: false,
-                workspaceDiagnostics: false
-              }
-            },
-            serverInfo: {
-              name: 'SysMLv2 LSP',
-              version: '1.0.0'
-            }
-          }
-        };
-      }
+connection.onInitialize((): InitializeResult => ({
+  capabilities: {
+    textDocumentSync: TextDocumentSyncKind.Full,
+    completionProvider: { triggerCharacters: ['.', ':', '(', '['] },
+    hoverProvider: true,
+    diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false }
+  },
+  serverInfo: { name: 'SysMLv2 LSP', version: '1.0.0' }
+}));
 
-      case 'initialized': {
-        return {
-          jsonrpc: '2.0',
-          id: undefined
-        };
-      }
-
-      case 'textDocument/didOpen': {
-        const { textDocument } = params;
-        documents.set(textDocument.uri, {
-          uri: textDocument.uri,
-          content: textDocument.text,
-          version: textDocument.version
-        });
-        return {
-          jsonrpc: '2.0',
-          id: undefined
-        };
-      }
-
-      case 'textDocument/didChange': {
-        const { textDocument, contentChanges } = params;
-        const doc = documents.get(textDocument.uri);
-        if (doc) {
-          doc.content = contentChanges[0].text;
-          doc.version = textDocument.version;
-        }
-        return {
-          jsonrpc: '2.0',
-          id: undefined
-        };
-      }
-
-      case 'textDocument/didClose': {
-        const { textDocument } = params;
-        documents.delete(textDocument.uri);
-        return {
-          jsonrpc: '2.0',
-          id: undefined
-        };
-      }
-
-      case 'textDocument/hover': {
-        const { textDocument, position } = params;
-        const doc = documents.get(textDocument.uri);
-        if (!doc) {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: null
-          };
-        }
-
-        const lines = doc.content.split('\n');
-        const line = lines[position.line] || '';
-        const wordMatch = line.match(/\b[a-zA-Z_][a-zA-Z0-9_]*\b/);
-        
-        if (wordMatch) {
-          const word = wordMatch[0];
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              contents: {
-                kind: 'markdown',
-                value: `**${word}**\n\nSysMLv2 identifier`
-              }
-            }
-          };
-        }
-
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: null
-        };
-      }
-
-      case 'textDocument/completion': {
-        const { textDocument, position } = params;
-        const doc = documents.get(textDocument.uri);
-        if (!doc) {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: { isIncomplete: false, items: [] }
-          };
-        }
-
-        // Basic completion suggestions
-        const keywords = [
-          'package', 'import', 'part', 'port', 'flow', 'connection',
-          'action', 'state', 'transition', 'requirement', 'constraint',
-          'def', 'definition', 'type', 'enum', 'struct', 'actor', 'behavior',
-          'public', 'private', 'protected', 'true', 'false', 'null'
-        ];
-
-        const types = [
-          'Boolean', 'Integer', 'Real', 'String', 'Natural', 'Positive',
-          'PartDef', 'PortDef', 'FlowDef', 'ItemDef', 'ActionDef', 'StateDef',
-          'Requirement', 'Element', 'Feature', 'Type', 'Classifier'
-        ];
-
-        const items = [
-          ...keywords.map(k => ({
-            label: k,
-            kind: 14, // Keyword
-            detail: 'keyword'
-          })),
-          ...types.map(t => ({
-            label: t,
-            kind: 7, // Class
-            detail: 'type'
-          }))
-        ];
-
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: {
-            isIncomplete: false,
-            items
-          }
-        };
-      }
-
-      case 'textDocument/diagnostic': {
-        const { textDocument } = params;
-        const doc = documents.get(textDocument.uri);
-        if (!doc) {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: { items: [] }
-          };
-        }
-
-        const markers = validateDocument(doc);
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: {
-            items: markers.map(m => ({
-              range: {
-                startLine: m.startLine,
-                startColumn: m.startColumn,
-                endLine: m.endLine,
-                endColumn: m.endColumn
-              },
-              severity: m.severity,
-              message: m.message
-            }))
-          }
-        };
-      }
-
-      default:
-        return {
-          jsonrpc: '2.0',
-          id,
-          error: {
-            code: -32601, // Method not found
-            message: `Method not found: ${method}`
-          }
-        };
-    }
-  } catch (error: any) {
-    return {
-      jsonrpc: '2.0',
-      id,
-      error: {
-        code: -32603, // Internal error
-        message: error.message || 'Internal error'
-      }
-    };
+connection.languages.diagnostics.on(async (params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (document) {
+    return { kind: DocumentDiagnosticReportKind.Full, items: validateDocument(document.getText()) } satisfies DocumentDiagnosticReport;
   }
-};
+  return { kind: DocumentDiagnosticReportKind.Full, items: [] } satisfies DocumentDiagnosticReport;
+});
 
-// Export for worker
-export {};
+connection.onCompletion((params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) return [];
+
+  const keywords = ['package', 'import', 'part', 'port', 'flow', 'connection', 'action', 'state', 'transition', 'requirement', 'constraint', 'def', 'definition', 'type', 'enum', 'struct', 'actor', 'behavior', 'public', 'private', 'protected', 'true', 'false', 'null'];
+  const types = ['Boolean', 'Integer', 'Real', 'String', 'Natural', 'Positive', 'PartDef', 'PortDef', 'FlowDef', 'ItemDef', 'ActionDef', 'StateDef', 'Requirement', 'Element', 'Feature', 'Type', 'Classifier'];
+  const items: CompletionItem[] = [
+    ...keywords.map(k => ({ label: k, kind: CompletionItemKind.Keyword, detail: 'keyword' })),
+    ...types.map(t => ({ label: t, kind: CompletionItemKind.Class, detail: 'type' }))
+  ];
+  return items;
+});
+
+connection.onHover((params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) return null;
+  const line = document.getText().split('\n')[params.position.line] || '';
+  const wordMatch = line.match(/\b[a-zA-Z_][a-zA-Z0-9_]*\b/);
+  if (wordMatch) {
+    return { contents: { kind: 'markdown', value: `**${wordMatch[0]}**\n\nSysMLv2 identifier` } };
+  }
+  return null;
+});
+
+documents.listen(connection);
+connection.listen();
