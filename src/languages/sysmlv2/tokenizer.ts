@@ -62,7 +62,7 @@ export const sysmlv2Language: monaco.languages.IMonarchLanguage = {
       [/\/\*/, 'comment', '@comment'],
 
       // Strings
-      [/"/, 'string', '@string'],
+      [/"[^"]*"/, 'string'],
       [/'[^']*'/, 'string'],
 
       // Numbers
@@ -81,7 +81,7 @@ export const sysmlv2Language: monaco.languages.IMonarchLanguage = {
       [/[A-Z][\w$]*/, {
         cases: {
           '@typeKeywords': 'type',
-          '@default': 'identifier'
+          '@default': 'identifier.type'
         }
       }],
 
@@ -115,7 +115,7 @@ export const sysmlv2Language: monaco.languages.IMonarchLanguage = {
     string: [
       [/[^\\"$]+/, 'string'],
       [/\\./, 'string.escape'],
-      [/"/, 'string', '@pop']
+      ["/", 'string', '@pop']
     ]
   },
 

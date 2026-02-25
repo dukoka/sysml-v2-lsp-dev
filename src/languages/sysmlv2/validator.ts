@@ -19,6 +19,50 @@ const SYSMLV2_KEYWORDS = [
   'attribute', 'in', 'out'
 ];
 
+// ============ Extract user-defined types from document ============
+
+function extractUserDefinedTypes(text: string): Set<string> {
+  const types = new Set<string>();
+  const lines = text.split('\n');
+  
+  // Patterns for user-defined type definitions
+  const definitionPatterns = [
+    /^\s*(part)\s+def\s+(\w+)/,      // part def Name
+    /^\s*(port)\s+def\s+(\w+)/,      // port def Name
+    /^\s*(action)\s+def\s+(\w+)/,    // action def Name
+    /^\s*(state)\s+def\s+(\w+)/,     // state def Name
+    /^\s*(flow)\s+def\s+(\w+)/,      // flow def Name
+    /^\s*(item)\s+def\s+(\w+)/,      // item def Name
+    /^\s*(connection)\s+def\s+(\w+)/, // connection def Name
+    /^\s*(constraint)\s+def\s+(\w+)/, // constraint def Name
+    /^\s*(requirement)\s+(\w+)/,       // requirement Name
+    /^\s*enum\s+(\w+)/,               // enum Name
+    /^\s*struct\s+(\w+)/,             // struct Name
+    /^\s*datatype\s+(\w+)/,          // datatype Name
+    /^\s*actor\s+def\s+(\w+)/,       // actor def Name
+    /^\s*behavior\s+def\s+(\w+)/,    // behavior def Name
+    /^\s*package\s+(\w+)/,           // package Name
+  ];
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    
+    // Skip comments
+    if (trimmed.startsWith('//') || trimmed.startsWith('/*')) {
+      continue;
+    }
+    
+    for (const pattern of definitionPatterns) {
+      const match = trimmed.match(pattern);
+      if (match && match[2]) {
+        types.add(match[2]);
+      }
+    }
+  }
+  
+  return types;
+}
+
 // Basic SysMLv2 validation rules
 export interface ValidationResult {
   severity: monaco.MarkerSeverity;
@@ -33,27 +77,140 @@ export interface ValidationResult {
 const validateText = (text: string): ValidationResult[] => {
   const results: ValidationResult[] = [];
   const lines = text.split('\n');
+  
+  // Extract user-defined types from the document
+  const userDefinedTypes = extractUserDefinedTypes(text);
 
   lines.forEach((line, lineIndex) => {
     const lineNum = lineIndex + 1;
+    const trimmedLine = line.trim();
+    
+    // Skip empty lines
+    if (trimmedLine === '') {
+      return;
+    }
+    
+    // Skip comments
+    if (trimmedLine.startsWith('//') || trimmedLine.startsWith('/*')) {
+      return;
+    }
+    
+    // Skip lines that are just braces
+    if (trimmedLine === '{' || trimmedLine === '}') {
+      return;
+    }
+    
+    // Skip 'end' statements
+    if (trimmedLine.startsWith('end')) {
+      return;
+    }
+    
+    // Skip definition lines that end with {
+    if (trimmedLine.endsWith('{')) {
+      return;
+    }
+    
+    // ============ Check for incomplete statements ============
+    
+    // Check if line needs semicolon - more comprehensive patterns
+    // 1. attribute/part/port/reference declarations
+    // 2. variable assignments and type annotations
+    // 3. function calls (println, print, assert)
+    // 4. Any word that looks like a statement (not a keyword or type)
+    const needsSemicolon = 
+      /^\s*(attribute|part|port|reference)\s+\w+/.test(trimmedLine) ||
+      /^\s*\w+\s*[=:]/.test(trimmedLine) ||
+      /^\s*(println|print|assert)\s*\(/.test(trimmedLine);
+    
+    // Check if this looks like an expression/statement without semicolon
+    // Matches: identifiers, function calls, expressions
+    const looksLikeStatement = 
+      /^\s*\w+\s*\(/.test(trimmedLine) ||  // function call
+      /^\s*\w+\s*[=+\-*/]/.test(trimmedLine) ||  // assignment or expression
+      /^\s*\w+\s*:\s*\w+/.test(trimmedLine);  // type annotation
+    
+    const hasValidEnding = 
+      trimmedLine.endsWith(';') || 
+      trimmedLine.endsWith(',') ||
+      trimmedLine.endsWith('{') ||
+      trimmedLine.endsWith('}');
+    
+    if ((needsSemicolon || looksLikeStatement) && !hasValidEnding) {
+      // Check if it's a keyword - if so, might be incomplete
+      const firstWord = trimmedLine.split(/\s+/)[0];
+      const isKnownKeyword = SYSMLV2_KEYWORDS.includes(firstWord);
+      
+      // If it's a known keyword that's incomplete, warn about missing semicolon
+      // Otherwise, report as unknown identifier
+      if (isKnownKeyword) {
+        // Known keyword - might be incomplete statement
+        results.push({
+          severity: monaco.MarkerSeverity.Warning,
+          message: 'Missing semicolon',
+          startLine: lineNum,
+          startColumn: line.length,
+          endLine: lineNum,
+          endColumn: line.length + 1
+        });
+      }
+    }
+    
+    // ============ Check for unknown identifiers ============
     
     // Skip comments and strings for keyword checking
     const cleanLine = line.replace(/\/\/.*$/, '').replace(/"[^"]*"/g, '').replace(/'[^']*'/g, '');
     
-    // Check for unknown identifiers that look like keywords (typo detection)
+    // Find all words
     const wordRegex = /\b[a-zA-Z_][a-zA-Z0-9_]*\b/g;
     let match;
     while ((match = wordRegex.exec(cleanLine)) !== null) {
       const word = match[0];
       const startCol = match.index + 1;
       
-      // Check if it's close to a known keyword (typo)
-      if (!SYSMLV2_KEYWORDS.includes(word)) {
+      // Skip known keywords
+      if (SYSMLV2_KEYWORDS.includes(word)) {
+        continue;
+      }
+      
+      // Skip user-defined types
+      if (userDefinedTypes.has(word)) {
+        continue;
+      }
+      
+      // Skip PascalCase identifiers (likely user-defined types)
+      if (/^[A-Z][a-zA-Z0-9_]*$/.test(word)) {
+        continue;
+      }
+      
+      // Only check for typos in identifiers - don't flag all unknown identifiers as errors
+      // Users can define their own attributes, parts, ports, etc.
+      
+      // Check if this line looks like a statement (not just a type reference)
+      // For example: "adfadf" looks like a statement, but "Vehicle" in "part engine: Vehicle" is a type reference
+      const isTypeAnnotation = /:\s*\w+/.test(cleanLine);
+      const isAssignment = /=\s*\w+/.test(cleanLine);
+      const isFunctionCall = /\w+\s*\(/.test(cleanLine);
+      const looksLikeStatement = isTypeAnnotation || isAssignment || isFunctionCall;
+      
+      // Only report unknown identifier if it looks like a standalone statement
+      // (not just a type reference in a declaration)
+      if (!looksLikeStatement && !isTypeAnnotation) {
+        // Check if it's close to a known keyword (typo detection)
         const similar = findSimilarKeyword(word, SYSMLV2_KEYWORDS);
         if (similar) {
           results.push({
             severity: monaco.MarkerSeverity.Error,
             message: `Unknown keyword '${word}'. Did you mean '${similar}'?`,
+            startLine: lineNum,
+            startColumn: startCol,
+            endLine: lineNum,
+            endColumn: startCol + word.length
+          });
+        } else if (trimmedLine === word) {
+          // The entire line is just this word - it's likely an error
+          results.push({
+            severity: monaco.MarkerSeverity.Error,
+            message: `Expected a token. Did you forget ';'?`,
             startLine: lineNum,
             startColumn: startCol,
             endLine: lineNum,

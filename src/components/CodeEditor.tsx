@@ -76,6 +76,18 @@ function CodeEditor({
           tabSize: 2,
           wordWrap: 'on',
           padding: { top: 16 },
+          folding: true,
+          foldingStrategy: 'indentation',
+          showFoldingControls: 'always',
+          glyphMargin: true,
+          renderLineHighlight: 'all',
+          inlayHints: { enabled: true },
+          links: true,
+          lens: true,
+          suggestOnTriggerCharacters: true,
+          acceptSuggestionOnEnter: 'on',
+          quickSuggestions: true,
+          parameterHints: { enabled: true },
         });
 
         if (!mounted) {
