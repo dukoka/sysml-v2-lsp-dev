@@ -45,6 +45,28 @@ describe('SysMLv2 Validator', () => {
       expect(undefinedErrors).toHaveLength(0);
     });
 
+    it('should have no errors for full VehicleExample with comments, multiplicity, in attribute', () => {
+      const code = `package VehicleExample {
+  // Part definitions
+  part def Vehicle {
+    part engine: Engine;
+    part wheels: Wheel[4];
+    port fuelIn: FuelPort;
+  }
+
+  part def Engine {
+    attribute horsepower: Integer;
+  }
+
+  // Port definitions
+  port def FuelPort {
+    in attribute fuelFlow: Real;
+  }
+}`;
+      const markers = validator.validate(code);
+      expect(markers).toHaveLength(0);
+    });
+
     it('should not flag user-defined attributes as undefined', () => {
       const code = `part def Engine {
         attribute horsepower: Integer;

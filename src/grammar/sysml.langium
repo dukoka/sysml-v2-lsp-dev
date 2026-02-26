@@ -20,13 +20,25 @@ PortDef:
   'port' 'def' name=ID (';' | '{' (members+=Member)* '}');
 
 AttributeDef:
-  'attribute' name=ID ':' type=TypeRef ';';
+  direction=Direction? 'attribute' name=ID ':' type=TypeRef ';';
 
 Member:
-  PartDef | PortDef | AttributeDef;
+  PartDef | PortDef | AttributeDef | PartUsage | PortUsage;
+
+PartUsage:
+  'part' name=ID ':' type=TypeRef ';';
+
+PortUsage:
+  'port' name=ID ':' type=TypeRef ';';
 
 TypeRef:
-  type=ID;
+  type=ID ('[' INT ']')?;
 
+Direction returns string:
+  'in' | 'out';
+
+hidden terminal SL_COMMENT: /\/\/[^\n\r]*/;
+hidden terminal ML_COMMENT: /\/\*[\s\S]*?\*\//;
 hidden terminal WS: /\s+/;
 terminal ID: /[_a-zA-Z][\w]*/;
+terminal INT: /[0-9]+/;

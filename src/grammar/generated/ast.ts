@@ -7,8 +7,11 @@
 import * as langium from 'langium';
 
 export const SysMLv2Terminals = {
+    SL_COMMENT: /\/\/[^\n\r]*/,
+    ML_COMMENT: /\/\*[\s\S]*?\*\//,
     WS: /\s+/,
     ID: /[_a-zA-Z][\w]*/,
+    INT: /[0-9]+/,
 };
 
 export type SysMLv2TerminalNames = keyof typeof SysMLv2Terminals;
@@ -16,8 +19,12 @@ export type SysMLv2TerminalNames = keyof typeof SysMLv2Terminals;
 export type SysMLv2KeywordNames =
     | ":"
     | ";"
+    | "["
+    | "]"
     | "attribute"
     | "def"
+    | "in"
+    | "out"
     | "package"
     | "part"
     | "port"
@@ -29,12 +36,14 @@ export type SysMLv2TokenNames = SysMLv2TerminalNames | SysMLv2KeywordNames;
 export interface AttributeDef extends langium.AstNode {
     readonly $container: Model | Package | PartDef | PortDef;
     readonly $type: 'AttributeDef';
+    direction?: Direction;
     name: string;
     type: TypeRef;
 }
 
 export const AttributeDef = {
     $type: 'AttributeDef',
+    direction: 'direction',
     name: 'name',
     type: 'type'
 } as const;
@@ -43,7 +52,13 @@ export function isAttributeDef(item: unknown): item is AttributeDef {
     return reflection.isInstance(item, AttributeDef.$type);
 }
 
-export type Member = AttributeDef | PartDef | PortDef;
+export type Direction = 'in' | 'out';
+
+export function isDirection(item: unknown): item is Direction {
+    return item === 'in' || item === 'out';
+}
+
+export type Member = AttributeDef | PartDef | PartUsage | PortDef | PortUsage;
 
 export const Member = {
     $type: 'Member'
@@ -111,6 +126,23 @@ export function isPartDef(item: unknown): item is PartDef {
     return reflection.isInstance(item, PartDef.$type);
 }
 
+export interface PartUsage extends langium.AstNode {
+    readonly $container: PartDef | PortDef;
+    readonly $type: 'PartUsage';
+    name: string;
+    type: TypeRef;
+}
+
+export const PartUsage = {
+    $type: 'PartUsage',
+    name: 'name',
+    type: 'type'
+} as const;
+
+export function isPartUsage(item: unknown): item is PartUsage {
+    return reflection.isInstance(item, PartUsage.$type);
+}
+
 export interface PortDef extends langium.AstNode {
     readonly $container: Model | Package | PartDef | PortDef;
     readonly $type: 'PortDef';
@@ -128,8 +160,25 @@ export function isPortDef(item: unknown): item is PortDef {
     return reflection.isInstance(item, PortDef.$type);
 }
 
+export interface PortUsage extends langium.AstNode {
+    readonly $container: PartDef | PortDef;
+    readonly $type: 'PortUsage';
+    name: string;
+    type: TypeRef;
+}
+
+export const PortUsage = {
+    $type: 'PortUsage',
+    name: 'name',
+    type: 'type'
+} as const;
+
+export function isPortUsage(item: unknown): item is PortUsage {
+    return reflection.isInstance(item, PortUsage.$type);
+}
+
 export interface TypeRef extends langium.AstNode {
-    readonly $container: AttributeDef;
+    readonly $container: AttributeDef | PartUsage | PortUsage;
     readonly $type: 'TypeRef';
     type: string;
 }
@@ -150,7 +199,9 @@ export type SysMLv2AstType = {
     ModelElement: ModelElement
     Package: Package
     PartDef: PartDef
+    PartUsage: PartUsage
     PortDef: PortDef
+    PortUsage: PortUsage
     TypeRef: TypeRef
 }
 
@@ -159,6 +210,9 @@ export class SysMLv2AstReflection extends langium.AbstractAstReflection {
         AttributeDef: {
             name: AttributeDef.$type,
             properties: {
+                direction: {
+                    name: AttributeDef.direction
+                },
                 name: {
                     name: AttributeDef.name
                 },
@@ -216,6 +270,18 @@ export class SysMLv2AstReflection extends langium.AbstractAstReflection {
             },
             superTypes: [Member.$type, ModelElement.$type]
         },
+        PartUsage: {
+            name: PartUsage.$type,
+            properties: {
+                name: {
+                    name: PartUsage.name
+                },
+                type: {
+                    name: PartUsage.type
+                }
+            },
+            superTypes: [Member.$type]
+        },
         PortDef: {
             name: PortDef.$type,
             properties: {
@@ -228,6 +294,18 @@ export class SysMLv2AstReflection extends langium.AbstractAstReflection {
                 }
             },
             superTypes: [Member.$type, ModelElement.$type]
+        },
+        PortUsage: {
+            name: PortUsage.$type,
+            properties: {
+                name: {
+                    name: PortUsage.name
+                },
+                type: {
+                    name: PortUsage.type
+                }
+            },
+            superTypes: [Member.$type]
         },
         TypeRef: {
             name: TypeRef.$type,

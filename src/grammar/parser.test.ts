@@ -36,4 +36,28 @@ describe('parseSysML', () => {
     expect(diags[0].range.start).toHaveProperty('line');
     expect(diags[0].range.start).toHaveProperty('character');
   });
+
+  it('parses VehicleExample with comments, part/port usage, multiplicity, in attribute', () => {
+    const code = `package VehicleExample {
+  // Part definitions
+  part def Vehicle {
+    part engine: Engine;
+    part wheels: Wheel[4];
+    port fuelIn: FuelPort;
+  }
+
+  part def Engine {
+    attribute horsepower: Integer;
+  }
+
+  // Port definitions
+  port def FuelPort {
+    in attribute fuelFlow: Real;
+  }
+}`;
+    const r = parseSysML(code);
+    expect(r.parserErrors).toHaveLength(0);
+    expect(r.lexerErrors).toHaveLength(0);
+    expect(r.value).toBeDefined();
+  });
 });
