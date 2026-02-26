@@ -154,6 +154,19 @@ class SysmlLSPClient {
       return null;
     }
   }
+
+  async formatDocument(options?: { tabSize?: number; insertSpaces?: boolean }): Promise<Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; newText: string }>> {
+    try {
+      const edits = await this.sendRequest('textDocument/formatting', {
+        textDocument: { uri: this.documentUri },
+        options: { tabSize: options?.tabSize ?? 2, insertSpaces: options?.insertSpaces ?? true }
+      });
+      return edits ?? [];
+    } catch (e) {
+      console.error('Failed to format:', e);
+      return [];
+    }
+  }
 }
 
 export const createSysmlLSPClient = (options: LSPClientOptions) => {

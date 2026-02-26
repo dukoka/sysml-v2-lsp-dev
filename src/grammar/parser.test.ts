@@ -7,7 +7,7 @@ describe('parseSysML', () => {
     expect(r.parserErrors).toHaveLength(0);
     expect(r.lexerErrors).toHaveLength(0);
     expect(r.value).toBeDefined();
-    expect((r.value as { elements?: unknown[] }).elements).toBeDefined();
+    expect((r.value as { children?: unknown[] }).children).toBeDefined();
   });
 
   it('parses part def', () => {

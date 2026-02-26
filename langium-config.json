@@ -1,9 +1,11 @@
 {
-  "projectName": "SysMLv2",
-  "languages": [{
-    "id": "sysmlv2",
-    "grammar": "src/grammar/sysml.langium",
-    "fileExtensions": [".sysml", ".sysmlv2", ".kerml"]
-  }],
+  "projectName": "SysML",
+  "languages": [
+    {
+      "id": "sysmlv2",
+      "grammar": "src/grammar/SysML.langium",
+      "fileExtensions": [".sysml", ".sysmlv2", ".kerml"]
+    }
+  ],
   "out": "src/grammar/generated"
 }

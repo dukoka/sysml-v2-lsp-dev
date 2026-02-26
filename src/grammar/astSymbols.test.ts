@@ -34,13 +34,13 @@ describe('extractAstSymbols', () => {
   });
 
   it('extracts port def and attribute', () => {
-    const r = parseSysML('port def FuelPort { attribute flow : Integer; }');
+    const r = parseSysML('package P { port def FuelPort { in attribute fuelFlow: Real; } }');
     expect(r.parserErrors).toHaveLength(0);
     const sym = extractAstSymbols(r.value);
     expect(sym.portDefs).toContain('FuelPort');
-    expect(sym.attributeNames).toContain('flow');
+    expect(sym.attributeNames).toContain('fuelFlow');
     expect(sym.typeNames).toContain('FuelPort');
-    expect(sym.typeNames).toContain('Integer');
+    expect(sym.typeNames).toContain('Real');
   });
 
   it('includes built-in types in typeNames', () => {

@@ -9,13 +9,13 @@ import {
   EmptyFileSystem,
 } from 'langium';
 import {
-  SysMLv2GeneratedSharedModule,
+  SysMLGeneratedSharedModule,
   SysMLGeneratedModule,
 } from './generated/module.js';
 
 const _shared = inject(
   createDefaultSharedCoreModule(EmptyFileSystem),
-  SysMLv2GeneratedSharedModule
+  SysMLGeneratedSharedModule
 );
 
 const _sysml = inject(
@@ -32,16 +32,15 @@ export function parseSysML(text: string, _uri = 'memory://model.sysml') {
 export function parseResultToDiagnostics(parseResult: {
   parserErrors: Array<{ token?: { startLine?: number; startColumn?: number; endLine?: number; endColumn?: number; startOffset?: number }; previousToken?: { endLine?: number; endColumn?: number; startOffset?: number }; message: string }>;
   lexerErrors?: Array<{ line?: number; column?: number; length?: number; message?: string }>;
-}): Array<{ severity: number; range: { start: { line: number; character: number }; end: { line: number; character: number } }; message: string }> {
+}) {
   const diagnostics: Array<{ severity: number; range: { start: { line: number; character: number }; end: { line: number; character: number } }; message: string }> = [];
-  const Error = 1; // DiagnosticSeverity.Error
 
   for (const e of parseResult.lexerErrors ?? []) {
     const line = (e.line ?? 1) - 1;
     const col = (e.column ?? 1) - 1;
     const len = e.length ?? 1;
     diagnostics.push({
-      severity: Error,
+      severity: 1,
       range: { start: { line, character: col }, end: { line, character: col + len } },
       message: e.message ?? 'Lexer error'
     });
@@ -65,7 +64,7 @@ export function parseResultToDiagnostics(parseResult: {
     } else {
       range = { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
     }
-    diagnostics.push({ severity: Error, range, message: e.message });
+    diagnostics.push({ severity: 1, range, message: e.message });
   }
 
   return diagnostics;

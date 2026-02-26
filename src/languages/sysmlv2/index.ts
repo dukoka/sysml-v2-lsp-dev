@@ -11,6 +11,8 @@ import {
   findDefinition,
   findAllOccurrences 
 } from './symbols';
+import { formatSysmlv2Code } from './formatter';
+import { sysmlv2SemanticTokensProvider } from './semanticTokens';
 
 // Language ID
 export const SYSMLV2_LANGUAGE_ID = 'sysmlv2';
@@ -27,129 +29,6 @@ action def Move {
 requirement SpeedReq {
   // Requirements here
 }`;
-
-// Normalize bracket spacing (align with SysML style: space before {, space after })
-function normalizeBracketSpacing(line: string): string {
-  // Skip strings and comments - apply to code portions only
-  let out = '';
-  let i = 0;
-  let inString = false;
-  let stringChar = '';
-  let inComment = false;
-  let inBlockComment = false;
-  while (i < line.length) {
-    if (inBlockComment) {
-      if (line.substring(i, i + 2) === '*/') {
-        inBlockComment = false;
-        out += '*/';
-        i += 2;
-        continue;
-      }
-      out += line[i++];
-      continue;
-    }
-    if (line.substring(i, i + 2) === '/*') {
-      inBlockComment = true;
-      out += '/*';
-      i += 2;
-      continue;
-    }
-    if (!inString && line.substring(i, i + 2) === '//') {
-      out += line.substring(i);
-      break;
-    }
-    if (!inString && (line[i] === '"' || line[i] === "'")) {
-      inString = true;
-      stringChar = line[i];
-      out += line[i++];
-      continue;
-    }
-    if (inString) {
-      if (line[i] === '\\' && i + 1 < line.length) {
-        out += line[i++] + line[i++];
-        continue;
-      }
-      if (line[i] === stringChar) inString = false;
-      out += line[i++];
-      continue;
-    }
-    // Space before { when preceded by word/identifier
-    if (line[i] === '{' && out.length > 0 && /\w$/.test(out)) {
-      out += ' {';
-      i++;
-      continue;
-    }
-    // Space after } when followed by word (e.g. } else)
-    if (out.length > 0 && out.endsWith('}') && /\w/.test(line[i])) {
-      out += ' ';
-    }
-    // Space between } and {
-    if (line[i] === '}' && i + 1 < line.length && line[i + 1] === '{') {
-      out += '} {';
-      i += 2;
-      continue;
-    }
-    out += line[i++];
-  }
-  return out;
-}
-
-// SysMLv2 Code Formatter
-function formatSysmlv2Code(text: string, options: monaco.languages.FormattingOptions): string {
-  const lines = text.split('\n');
-  const result: string[] = [];
-  const tabSize = options.tabSize || 2;
-  const indentChar = options.insertSpaces ? ' ' : '\t';
-  
-  // Normalize bracket spacing on each line first
-  const normalizedLines = lines.map(line => normalizeBracketSpacing(line));
-  
-  // Calculate indent for each line using brace counting
-  const baseIndents: number[] = [];
-  let braceDepth = 0;
-  
-  for (let i = 0; i < normalizedLines.length; i++) {
-    const line = normalizedLines[i];
-    const trimmed = line.trim();
-    
-    if (trimmed === '') {
-      baseIndents.push(-1); // Mark empty line
-      continue;
-    }
-    
-    // Count braces on this line
-    const openBraces = (trimmed.match(/{/g) || []).length;
-    const closeBraces = (trimmed.match(/}/g) || []).length;
-    
-    // First, decrease indent for lines starting with closing brace
-    if (trimmed.startsWith('}') || trimmed.startsWith('end')) {
-      braceDepth = Math.max(0, braceDepth - 1);
-    }
-    
-    baseIndents.push(braceDepth);
-    
-    // Then, increase indent for lines with opening brace
-    if (openBraces > 0) {
-      braceDepth += openBraces;
-    }
-  }
-  
-  // Build formatted result
-  for (let i = 0; i < normalizedLines.length; i++) {
-    const line = normalizedLines[i];
-    const trimmed = line.trim();
-    
-    if (trimmed === '') {
-      result.push('');
-      continue;
-    }
-    
-    const indent = indentChar.repeat(baseIndents[i] * tabSize);
-    result.push(indent + trimmed);
-  }
-  
-  return result.join('\n');
-}
 
 // Register the SysMLv2 language with Monaco
 export const registerSysmlv2Language = () => {
@@ -171,6 +50,12 @@ export const registerSysmlv2Language = () => {
   monaco.languages.setMonarchTokensProvider(
     SYSMLV2_LANGUAGE_ID,
     sysmlv2Language as any
+  );
+
+  // Semantic tokens (definition names, types)
+  monaco.languages.registerDocumentSemanticTokensProvider(
+    SYSMLV2_LANGUAGE_ID,
+    sysmlv2SemanticTokensProvider
   );
 
   // Register completion provider
@@ -666,16 +551,20 @@ export const registerSysmlv2Theme = () => {
     inherit: true,
     rules: [
       { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
-      { token: 'type', foreground: '4EC9B0' },  // Built-in types: Integer, String, etc.
+      { token: 'type', foreground: '4EC9B0' },
       { token: 'support.function', foreground: 'DCDCAA' },
       { token: 'string', foreground: 'CE9178' },
       { token: 'number', foreground: 'B5CEA8' },
       { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
       { token: 'operator', foreground: 'D4D4D4' },
-      { token: 'identifier', foreground: '9CDCFE' },  // Regular identifiers
-      { token: 'identifier.type', foreground: 'D7BA8D' },  // User-defined types: Engine, Vehicle, etc.
-      { token: 'identifier.definition', foreground: 'FFD700', fontStyle: 'bold' },  // Definition names
-      { token: 'delimiter', foreground: 'D4D4D4' }
+      { token: 'identifier', foreground: '9CDCFE' },
+      { token: 'identifier.type', foreground: 'D7BA8D' },
+      { token: 'identifier.definition', foreground: 'FFD700', fontStyle: 'bold' },
+      { token: 'delimiter', foreground: 'D4D4D4' },
+      // Semantic token types
+      { token: 'namespace', foreground: '4EC9B0' },
+      { token: 'class', foreground: 'FFD700', fontStyle: 'bold' },
+      { token: 'property', foreground: '9CDCFE' }
     ],
     colors: {
       'editor.background': '#1E1E1E',

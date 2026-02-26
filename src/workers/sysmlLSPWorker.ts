@@ -16,10 +16,13 @@ import {
   DocumentDiagnosticReportKind,
   type DocumentDiagnosticReport,
   DiagnosticSeverity,
-  type Diagnostic
+  type Diagnostic,
+  type TextEdit
 } from 'vscode-languageserver/browser';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { parseSysML, parseResultToDiagnostics } from '../grammar/parser.js';
+import { extractAstSymbols } from '../grammar/astSymbols.js';
+import { formatSysmlv2Code } from '../languages/sysmlv2/formatter.js';
 
 // Document store (managed by TextDocuments)
 const documents = new TextDocuments(TextDocument);
@@ -100,7 +103,7 @@ function validateDocument(text: string): Diagnostic[] {
   // AST-based diagnostics from Langium parser (parser/lexer errors)
   try {
     const parseResult = parseSysML(text);
-    markers.push(...parseResultToDiagnostics(parseResult));
+    markers.push(...(parseResultToDiagnostics(parseResult) as Diagnostic[]));
   } catch {
     // Parser init or runtime error - continue with regex-based validation
   }
@@ -244,10 +247,37 @@ connection.onInitialize((): InitializeResult => ({
     textDocumentSync: TextDocumentSyncKind.Full,
     completionProvider: { triggerCharacters: ['.', ':', '(', '['] },
     hoverProvider: true,
-    diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false }
+    diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false },
+    documentFormattingProvider: true,
+    documentRangeFormattingProvider: true,
+    workspace: { workspaceFolders: { supported: true } }
   },
   serverInfo: { name: 'SysMLv2 LSP', version: '1.0.0' }
 }));
+
+connection.onRequest('textDocument/formatting', (params: { textDocument: { uri: string }; options?: { tabSize?: number; insertSpaces?: boolean } }): TextEdit[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const formatted = formatSysmlv2Code(doc.getText(), {
+    tabSize: params.options?.tabSize ?? 2,
+    insertSpaces: params.options?.insertSpaces ?? true
+  });
+  return [{ range: { start: { line: 0, character: 0 }, end: doc.positionAt(doc.getText().length) }, newText: formatted }];
+});
+
+connection.onRequest('textDocument/rangeFormatting', (params: { textDocument: { uri: string }; range: { start: { line: number; character: number }; end: { line: number; character: number } }; options?: { tabSize?: number; insertSpaces?: boolean } }): TextEdit[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const fullText = doc.getText();
+  const startOffset = doc.offsetAt(params.range.start);
+  const endOffset = doc.offsetAt(params.range.end);
+  const rangeText = fullText.substring(startOffset, endOffset);
+  const formatted = formatSysmlv2Code(rangeText, {
+    tabSize: params.options?.tabSize ?? 2,
+    insertSpaces: params.options?.insertSpaces ?? true
+  });
+  return [{ range: params.range, newText: formatted }];
+});
 
 connection.languages.diagnostics.on(async (params) => {
   const document = documents.get(params.textDocument.uri);
@@ -257,16 +287,59 @@ connection.languages.diagnostics.on(async (params) => {
   return { kind: DocumentDiagnosticReportKind.Full, items: [] } satisfies DocumentDiagnosticReport;
 });
 
+function detectCompletionContextLsp(line: string, char: number): string {
+  const beforeCursor = line.substring(0, char);
+  const trimmed = beforeCursor.trim();
+  if (beforeCursor.endsWith(':') && !beforeCursor.endsWith('::')) return 'type';
+  if (/^(package)\s*$/i.test(trimmed)) return 'packageName';
+  if (/\b(part|port)\s+def\s*$/i.test(trimmed)) return 'defName';
+  if (/\battribute\s*$/i.test(trimmed)) return 'attrName';
+  return 'general';
+}
+
 connection.onCompletion((params) => {
   const document = documents.get(params.textDocument.uri);
   if (!document) return [];
 
+  const text = document.getText();
+  const lines = text.split('\n');
+  const line = lines[params.position.line] ?? '';
+  const ctx = detectCompletionContextLsp(line, params.position.character);
+
+  let astSymbols: ReturnType<typeof extractAstSymbols> | null = null;
+  try {
+    const parseResult = parseSysML(text);
+    if (parseResult.parserErrors.length === 0 && parseResult.lexerErrors.length === 0) {
+      astSymbols = extractAstSymbols(parseResult.value);
+    }
+  } catch {
+    // Parse failed
+  }
+
   const keywords = ['package', 'import', 'part', 'port', 'flow', 'connection', 'action', 'state', 'transition', 'requirement', 'constraint', 'def', 'definition', 'type', 'enum', 'struct', 'actor', 'behavior', 'public', 'private', 'protected', 'true', 'false', 'null'];
-  const types = ['Boolean', 'Integer', 'Real', 'String', 'Natural', 'Positive', 'PartDef', 'PortDef', 'FlowDef', 'ItemDef', 'ActionDef', 'StateDef', 'Requirement', 'Element', 'Feature', 'Type', 'Classifier'];
-  const items: CompletionItem[] = [
-    ...keywords.map(k => ({ label: k, kind: CompletionItemKind.Keyword, detail: 'keyword' })),
-    ...types.map(t => ({ label: t, kind: CompletionItemKind.Class, detail: 'type' }))
-  ];
+  const staticTypes = ['Boolean', 'Integer', 'Real', 'String', 'Natural', 'Positive', 'PartDef', 'PortDef', 'FlowDef', 'ItemDef', 'ActionDef', 'StateDef', 'Requirement', 'Element', 'Feature', 'Type', 'Classifier'];
+
+  let items: CompletionItem[] = [];
+  if (ctx === 'type') {
+    const typeNames = astSymbols?.typeNames?.length ? astSymbols.typeNames : staticTypes;
+    items = typeNames.map(t => ({ label: t, kind: CompletionItemKind.Class, detail: 'type' }));
+  } else if (ctx === 'packageName') {
+    const pkgNames = astSymbols?.packages?.length ? astSymbols.packages : ['MyPackage', 'Library', 'Utilities', 'Models'];
+    items = pkgNames.map(p => ({ label: p, kind: CompletionItemKind.Module, detail: 'package' }));
+  } else if (ctx === 'defName') {
+    const defNames = astSymbols
+      ? [...new Set([...astSymbols.partDefs, ...astSymbols.portDefs, 'Vehicle', 'Engine', 'Port', 'Action', 'State'])]
+      : ['Vehicle', 'Engine', 'Port', 'Action', 'State', 'Item', 'Connection', 'Flow'];
+    items = defNames.map(n => ({ label: n, kind: CompletionItemKind.Class, detail: 'definition' }));
+  } else if (ctx === 'attrName') {
+    const attrNames = astSymbols?.attributeNames?.length ? astSymbols.attributeNames : ['name', 'id', 'value', 'description', 'owner'];
+    items = attrNames.map(a => ({ label: a, kind: CompletionItemKind.Variable, detail: 'attribute' }));
+  } else {
+    items = [
+      ...keywords.map(k => ({ label: k, kind: CompletionItemKind.Keyword, detail: 'keyword' })),
+      ...(astSymbols?.typeNames?.length ? astSymbols.typeNames : staticTypes).map(t => ({ label: t, kind: CompletionItemKind.Class, detail: 'type' }))
+    ];
+  }
   return items;
 });
 

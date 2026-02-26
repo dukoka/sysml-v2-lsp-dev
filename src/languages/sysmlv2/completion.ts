@@ -1,4 +1,6 @@
 import * as monaco from 'monaco-editor';
+import { parseSysML } from '../../grammar/parser.js';
+import { extractAstSymbols, type AstSymbols } from '../../grammar/astSymbols.js';
 
 // ============ Keyword Categories ============
 
@@ -195,6 +197,16 @@ export const sysmlv2CompletionProvider: monaco.languages.CompletionItemProvider 
 
     const ctx = detectCompletionContext(model, position);
 
+    let astSymbols: AstSymbols | null = null;
+    try {
+      const parseResult = parseSysML(model.getValue());
+      if (parseResult.parserErrors.length === 0 && parseResult.lexerErrors.length === 0) {
+        astSymbols = extractAstSymbols(parseResult.value);
+      }
+    } catch {
+      // Parse failed - use static completions only
+    }
+
     const suggestions: monaco.languages.CompletionItem[] = [];
     let sortPriority = 0;
 
@@ -202,11 +214,15 @@ export const sysmlv2CompletionProvider: monaco.languages.CompletionItemProvider 
     
     switch (ctx.type) {
       // Type references (after :, :>, ::>, etc.)
-      case 'type':
-        filterByPrefix(SYSMLV2_TYPES.map(t => 
+      case 'type': {
+        const typeItems = astSymbols?.typeNames?.length
+          ? astSymbols.typeNames
+          : SYSMLV2_TYPES;
+        filterByPrefix(typeItems.map(t => 
           createItem(t, CompletionItemKind.Class, 'type', String(sortPriority++))
         ), ctx.currentWord).forEach(item => suggestions.push({ ...item, range }));
         return { suggestions };
+      }
         
       // Member access (after .)
       case 'member':
@@ -229,20 +245,22 @@ export const sysmlv2CompletionProvider: monaco.languages.CompletionItemProvider 
         return { suggestions };
         
       // Package names
-      case 'packageName':
-        const pkgItems = ['MyPackage', 'Library', 'Utilities', 'Models'];
+      case 'packageName': {
+        const pkgItems = (astSymbols?.packages?.length ? astSymbols.packages : ['MyPackage', 'Library', 'Utilities', 'Models']);
         filterByPrefix(pkgItems.map(p => 
           createItem(p, CompletionItemKind.Module, 'package', String(sortPriority++))
         ), ctx.currentWord).forEach(item => suggestions.push({ ...item, range }));
         return { suggestions };
+      }
         
       // Attribute names
-      case 'attrName':
-        const attrItems = ['name', 'id', 'value', 'description', 'owner', 'version', 'status', 'type'];
+      case 'attrName': {
+        const attrItems = (astSymbols?.attributeNames?.length ? astSymbols.attributeNames : ['name', 'id', 'value', 'description', 'owner', 'version', 'status', 'type']);
         filterByPrefix(attrItems.map(a => 
           createItem(a, CompletionItemKind.Variable, 'attribute', String(sortPriority++))
         ), ctx.currentWord).forEach(item => suggestions.push({ ...item, range }));
         return { suggestions };
+      }
         
       // Enum names
       case 'enumName':
@@ -306,15 +324,18 @@ export const sysmlv2CompletionProvider: monaco.languages.CompletionItemProvider 
         return { suggestions };
       
       // After 'part def ' - definition names
-      case 'defName':
-        const defSuggestions = ['Vehicle', 'Engine', 'Port', 'Action', 'State', 'Item', 'Connection', 'Flow', 'Constraint', 'Requirement', 'Data', 'Config'];
+      case 'defName': {
+        const defSuggestions = astSymbols
+          ? [...new Set([...astSymbols.partDefs, ...astSymbols.portDefs, 'Vehicle', 'Engine', 'Port', 'Action', 'State', 'Item', 'Connection', 'Flow', 'Constraint', 'Requirement', 'Data', 'Config'])]
+          : ['Vehicle', 'Engine', 'Port', 'Action', 'State', 'Item', 'Connection', 'Flow', 'Constraint', 'Requirement', 'Data', 'Config'];
         filterByPrefix(defSuggestions.map(name => 
           createItem(name, CompletionItemKind.Variable, 'definition', String(sortPriority++))
         ), ctx.currentWord).forEach(item => suggestions.push({ ...item, range }));
         return { suggestions };
+      }
         
       // Inside definition body (after {)
-      case 'definitionBody':
+      case 'definitionBody': {
         // Keywords for structure
         const bodyKeywords = [
           ...STRUCTURAL_KEYWORDS, ...TYPE_KEYWORDS, ...MODIFIER_KEYWORDS,
@@ -326,11 +347,20 @@ export const sysmlv2CompletionProvider: monaco.languages.CompletionItemProvider 
           createItem(kw, CompletionItemKind.Keyword, 'keyword', String(sortPriority++))
         ), ctx.currentWord).forEach(item => suggestions.push({ ...item, range }));
         
-        // Types
-        filterByPrefix(SYSMLV2_TYPES.map(t => 
+        // Types (AST-derived + static)
+        const bodyTypes = astSymbols?.typeNames?.length ? astSymbols.typeNames : SYSMLV2_TYPES;
+        filterByPrefix(bodyTypes.map(t => 
           createItem(t, CompletionItemKind.Class, 'type', String(sortPriority++))
         ), ctx.currentWord).forEach(item => suggestions.push({ ...item, range }));
+        // Members from AST (part/port/attribute names in scope)
+        if (astSymbols) {
+          const members = [...astSymbols.partDefs, ...astSymbols.portDefs, ...astSymbols.attributeNames];
+          filterByPrefix(members.map(m => 
+            createItem(m, CompletionItemKind.Property, 'member', String(sortPriority++))
+          ), ctx.currentWord).forEach(item => suggestions.push({ ...item, range }));
+        }
         return { suggestions };
+      }
         
       // General context (at start of line or after whitespace)
       case 'general':

@@ -4,7 +4,7 @@
  ******************************************************************************/
 
 import type { LangiumSharedCoreServices, LangiumCoreServices, LangiumGeneratedCoreServices, LangiumGeneratedSharedCoreServices, LanguageMetaData, Module } from 'langium';
-import { SysMLv2AstReflection } from './ast.js';
+import { SysMLAstReflection } from './ast.js';
 import { SysMLGrammar } from './grammar.js';
 
 export const SysMLLanguageMetaData = {
@@ -14,8 +14,8 @@ export const SysMLLanguageMetaData = {
     mode: 'development'
 } as const satisfies LanguageMetaData;
 
-export const SysMLv2GeneratedSharedModule: Module<LangiumSharedCoreServices, LangiumGeneratedSharedCoreServices> = {
-    AstReflection: () => new SysMLv2AstReflection()
+export const SysMLGeneratedSharedModule: Module<LangiumSharedCoreServices, LangiumGeneratedSharedCoreServices> = {
+    AstReflection: () => new SysMLAstReflection()
 };
 
 export const SysMLGeneratedModule: Module<LangiumCoreServices, LangiumGeneratedCoreServices> = {
