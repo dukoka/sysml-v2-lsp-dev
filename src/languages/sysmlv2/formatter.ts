@@ -1,10 +1,16 @@
 /**
  * SysMLv2 formatter - shared by LSP Worker and Monaco provider.
+ * When root (parsed AST Namespace) is provided, uses AST-based indent (phase A); otherwise brace-depth.
  */
+import { getAstIndentLevels } from '../../grammar/astUtils.js';
+
 export interface FormattingOptions {
   tabSize?: number;
   insertSpaces?: boolean;
 }
+
+/** Optional AST root (Namespace) for AST-aware formatting; when set, indent matches document symbols/folding. */
+export type FormatAstRoot = unknown;
 
 function normalizeBracketSpacing(line: string): string {
   let out = '';
@@ -66,39 +72,41 @@ function normalizeBracketSpacing(line: string): string {
   return out;
 }
 
-export function formatSysmlv2Code(text: string, options: FormattingOptions = {}): string {
+export function formatSysmlv2Code(
+  text: string,
+  options: FormattingOptions = {},
+  root?: FormatAstRoot
+): string {
   const lines = text.split('\n');
   const result: string[] = [];
   const tabSize = options.tabSize ?? 2;
   const indentChar = options.insertSpaces !== false ? ' ' : '\t';
 
   const normalizedLines = lines.map(line => normalizeBracketSpacing(line));
-  const baseIndents: number[] = [];
-  let braceDepth = 0;
 
-  for (let i = 0; i < normalizedLines.length; i++) {
-    const line = normalizedLines[i];
-    const trimmed = line.trim();
-
-    if (trimmed === '') {
-      baseIndents.push(-1);
-      continue;
+  let baseIndents: (number | null)[];
+  if (root != null) {
+    baseIndents = getAstIndentLevels(root, text);
+  } else {
+    const braceIndents: number[] = [];
+    let braceDepth = 0;
+    for (let i = 0; i < normalizedLines.length; i++) {
+      const trimmed = normalizedLines[i].trim();
+      if (trimmed === '') {
+        braceIndents.push(-1);
+        continue;
+      }
+      const openBraces = (trimmed.match(/{/g) || []).length;
+      if (trimmed.startsWith('}') || trimmed.startsWith('end')) {
+        braceDepth = Math.max(0, braceDepth - 1);
+      }
+      braceIndents.push(braceDepth);
+      if (openBraces > 0) braceDepth += openBraces;
     }
-
-    const openBraces = (trimmed.match(/{/g) || []).length;
-    const closeBraces = (trimmed.match(/}/g) || []).length;
-
-    if (trimmed.startsWith('}') || trimmed.startsWith('end')) {
-      braceDepth = Math.max(0, braceDepth - 1);
-    }
-
-    baseIndents.push(braceDepth);
-
-    if (openBraces > 0) {
-      braceDepth += openBraces;
-    }
+    baseIndents = braceIndents.map(d => (d < 0 ? null : d));
   }
 
+  let lastIndent = 0;
   for (let i = 0; i < normalizedLines.length; i++) {
     const line = normalizedLines[i];
     const trimmed = line.trim();
@@ -108,7 +116,16 @@ export function formatSysmlv2Code(text: string, options: FormattingOptions = {})
       continue;
     }
 
-    const indent = indentChar.repeat(baseIndents[i] * tabSize);
+    let level: number;
+    const raw = baseIndents[i];
+    if (raw === null || raw === undefined) {
+      level = lastIndent;
+    } else {
+      level = raw;
+      lastIndent = level;
+    }
+    if (level < 0) level = 0;
+    const indent = indentChar.repeat(level * tabSize);
     result.push(indent + trimmed);
   }
 

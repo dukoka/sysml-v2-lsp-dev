@@ -3,6 +3,7 @@ import * as monaco from 'monaco-editor';
 import { registerSysmlv2Language, registerSysmlv2Theme, SYSMLV2_LANGUAGE_ID } from '../languages/sysmlv2';
 import { createSysmlv2Validator } from '../languages/sysmlv2/validator';
 import { createSysmlLSPClient } from '../workers/lspClient';
+import { isG4ValidationEnabled } from '../grammar/config';
 
 // Configure Monaco workers
 self.MonacoEnvironment = {
@@ -104,6 +105,13 @@ function CodeEditor({
         }
 
         editorRef.current = editor;
+        (monaco.editor as any).registerCommand?.('sysml.goToFirstDefinition', (_: any, lineNumber: number, column: number) => {
+          const ed = editorRef.current;
+          if (ed && typeof lineNumber === 'number' && typeof column === 'number') {
+            ed.setPosition({ lineNumber, column });
+            ed.revealLineInCenter(lineNumber);
+          }
+        });
         const model = editor.getModel();
         console.log('Model language:', model?.getLanguageId());
 
@@ -165,6 +173,27 @@ function CodeEditor({
               );
               monaco.editor.setModelMarkers(model, 'sysmlv2', []);
               monaco.editor.setModelMarkers(model, 'sysmlv2-lsp', markers);
+              if (isG4ValidationEnabled()) {
+                const g4Items = await client.getG4Diagnostics();
+                const g4Markers: monaco.editor.IMarkerData[] = g4Items.map(
+                  (item: { range?: { start?: { line: number; character: number }; end?: { line: number; character: number } }; severity?: number; message: string }) => {
+                    const r = item.range ?? {};
+                    const start = r.start ?? { line: 0, character: 0 };
+                    const end = r.end ?? { line: 0, character: 0 };
+                    return {
+                      startLineNumber: start.line + 1,
+                      startColumn: start.character + 1,
+                      endLineNumber: end.line + 1,
+                      endColumn: end.character + 1,
+                      message: item.message,
+                      severity: (item.severity === 1 || item.severity === 8) ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+                    };
+                  }
+                );
+                monaco.editor.setModelMarkers(model, 'sysmlv2-g4', g4Markers);
+              } else {
+                monaco.editor.setModelMarkers(model, 'sysmlv2-g4', []);
+              }
             } catch {
               const fallback = validator.validate(content);
               monaco.editor.setModelMarkers(model, 'sysmlv2-lsp', []);
@@ -172,6 +201,7 @@ function CodeEditor({
             }
           } else {
             monaco.editor.setModelMarkers(model, 'sysmlv2-lsp', []);
+            monaco.editor.setModelMarkers(model, 'sysmlv2-g4', []);
             const fallback = validator.validate(content);
             monaco.editor.setModelMarkers(model, 'sysmlv2', fallback);
           }

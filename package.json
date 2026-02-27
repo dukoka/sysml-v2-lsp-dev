@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "langium:generate": "langium generate",
+    "g4:generate": "node scripts/g4-generate.mjs",
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",

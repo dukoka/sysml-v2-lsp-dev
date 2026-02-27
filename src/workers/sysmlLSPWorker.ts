@@ -21,30 +21,15 @@ import {
 } from 'vscode-languageserver/browser';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { parseSysML, parseResultToDiagnostics } from '../grammar/parser.js';
+import { isNamespace } from '../grammar/generated/ast.js';
 import { extractAstSymbols } from '../grammar/astSymbols.js';
+import { runSemanticValidation } from '../languages/sysmlv2/semanticValidation.js';
 import { formatSysmlv2Code } from '../languages/sysmlv2/formatter.js';
+import { SYSMLV2_KEYWORDS } from '../languages/sysmlv2/keywords.js';
+import { runG4Parse } from '../grammar/g4/g4Runner.js';
 
 // Document store (managed by TextDocuments)
 const documents = new TextDocuments(TextDocument);
-
-// SysMLv2 keywords
-const SYSMLV2_KEYWORDS = [
-  'import', 'package', 'library', 'alias',
-  'def', 'definition', 'abstract', 'specialization',
-  'part', 'port', 'flow', 'connection', 'item',
-  'action', 'state', 'transition', 'event',
-  'type', 'enum', 'struct', 'datatype',
-  'actor', 'behavior', 'constraint',
-  'requirement', 'assumption', 'verification',
-  'generalization', 'reduction', 'feature',
-  'end', 'binding', 'succession', 'participation',
-  'if', 'else', 'while', 'for', 'return',
-  'true', 'false', 'null',
-  'public', 'private', 'protected', 'readonly',
-  'owned', 'exhibits', 'subject', 'comment',
-  'metadata', 'snapshot', 'stage',
-  'attribute', 'in', 'out'
-];
 
 const DEFINITION_PATTERNS = [
   /^\s*(part|port|action|state|flow|item|connection|constraint|actor|behavior)\s+def\s+(\w+)/,
@@ -104,6 +89,17 @@ function validateDocument(text: string): Diagnostic[] {
   try {
     const parseResult = parseSysML(text);
     markers.push(...(parseResultToDiagnostics(parseResult) as Diagnostic[]));
+    if (parseResult.parserErrors.length === 0 && parseResult.lexerErrors.length === 0) {
+      const semantic = runSemanticValidation(parseResult.value, text);
+      for (const d of semantic) {
+        markers.push({
+          severity: d.severity as DiagnosticSeverity,
+          range: d.range,
+          message: d.message
+        });
+      }
+      return markers;
+    }
   } catch {
     // Parser init or runtime error - continue with regex-based validation
   }
@@ -255,14 +251,30 @@ connection.onInitialize((): InitializeResult => ({
   serverInfo: { name: 'SysMLv2 LSP', version: '1.0.0' }
 }));
 
+connection.onRequest('sysml/g4Diagnostics', (params: { textDocument: { uri: string } }): Diagnostic[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const items = runG4Parse(doc.getText());
+  return items.map(d => ({ range: d.range, message: d.message, severity: d.severity ?? DiagnosticSeverity.Error, source: 'G4' }));
+});
+
 connection.onRequest('textDocument/formatting', (params: { textDocument: { uri: string }; options?: { tabSize?: number; insertSpaces?: boolean } }): TextEdit[] => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return [];
-  const formatted = formatSysmlv2Code(doc.getText(), {
+  const text = doc.getText();
+  const parseResult = parseSysML(text);
+  const root =
+    parseResult.parserErrors.length === 0 &&
+    parseResult.lexerErrors.length === 0 &&
+    parseResult.value &&
+    isNamespace(parseResult.value)
+      ? parseResult.value
+      : undefined;
+  const formatted = formatSysmlv2Code(text, {
     tabSize: params.options?.tabSize ?? 2,
     insertSpaces: params.options?.insertSpaces ?? true
-  });
-  return [{ range: { start: { line: 0, character: 0 }, end: doc.positionAt(doc.getText().length) }, newText: formatted }];
+  }, root);
+  return [{ range: { start: { line: 0, character: 0 }, end: doc.positionAt(text.length) }, newText: formatted }];
 });
 
 connection.onRequest('textDocument/rangeFormatting', (params: { textDocument: { uri: string }; range: { start: { line: number; character: number }; end: { line: number; character: number } }; options?: { tabSize?: number; insertSpaces?: boolean } }): TextEdit[] => {
@@ -272,6 +284,7 @@ connection.onRequest('textDocument/rangeFormatting', (params: { textDocument: { 
   const startOffset = doc.offsetAt(params.range.start);
   const endOffset = doc.offsetAt(params.range.end);
   const rangeText = fullText.substring(startOffset, endOffset);
+  // Range formatting uses brace-depth only (AST ranges refer to full document)
   const formatted = formatSysmlv2Code(rangeText, {
     tabSize: params.options?.tabSize ?? 2,
     insertSpaces: params.options?.insertSpaces ?? true

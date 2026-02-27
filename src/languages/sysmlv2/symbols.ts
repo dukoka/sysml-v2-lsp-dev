@@ -76,18 +76,59 @@ export function parseSymbols(text: string): Map<string, SymbolInfo[]> {
       symbols.get(name)!.push(symbol);
     }
 
-    // Find attribute definitions: attribute name : type
-    const attrMatch = cleanLine.match(/\battribute\s+(\w+)/);
+    // Find attribute definitions: attribute name or (in|out) attribute name : type
+    const attrMatch = cleanLine.match(/\b(?:in|out)?\s*attribute\s+(\w+)/);
     if (attrMatch) {
       const name = attrMatch[1];
+      const col = cleanLine.indexOf(name) + 1;
       const symbol: SymbolInfo = {
         name,
         kind: 'definition',
         line: lineNum,
-        column: cleanLine.indexOf(name) + 1,
+        column: col,
         endLine: lineNum,
-        endColumn: cleanLine.indexOf(name) + name.length + 1,
+        endColumn: col + name.length,
         container: 'attribute'
+      };
+      if (!symbols.has(name)) {
+        symbols.set(name, []);
+      }
+      symbols.get(name)!.push(symbol);
+    }
+
+    // Find part usages: part name : Type (not part def)
+    const partUsageMatch = cleanLine.match(/\bpart\s+(\w+)\s*:\s*\w+/);
+    if (partUsageMatch && partUsageMatch[1] !== 'def') {
+      const name = partUsageMatch[1];
+      const col = cleanLine.indexOf(partUsageMatch[1]) + 1;
+      const symbol: SymbolInfo = {
+        name,
+        kind: 'definition',
+        line: lineNum,
+        column: col,
+        endLine: lineNum,
+        endColumn: col + name.length,
+        container: 'part'
+      };
+      if (!symbols.has(name)) {
+        symbols.set(name, []);
+      }
+      symbols.get(name)!.push(symbol);
+    }
+
+    // Find port usages: port name : Type (not port def)
+    const portUsageMatch = cleanLine.match(/\bport\s+(\w+)\s*:\s*\w+/);
+    if (portUsageMatch && portUsageMatch[1] !== 'def') {
+      const name = portUsageMatch[1];
+      const col = cleanLine.indexOf(portUsageMatch[1]) + 1;
+      const symbol: SymbolInfo = {
+        name,
+        kind: 'definition',
+        line: lineNum,
+        column: col,
+        endLine: lineNum,
+        endColumn: col + name.length,
+        container: 'port'
       };
       if (!symbols.has(name)) {
         symbols.set(name, []);

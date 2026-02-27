@@ -1,6 +1,8 @@
 import * as monaco from 'monaco-editor';
 import { parseSysML } from '../../grammar/parser.js';
 import { extractAstSymbols, type AstSymbols } from '../../grammar/astSymbols.js';
+import { buildScopeTree, getScopeAtPosition } from './scope.js';
+import { isNamespace } from '../../grammar/generated/ast.js';
 
 // ============ Keyword Categories ============
 
@@ -198,10 +200,15 @@ export const sysmlv2CompletionProvider: monaco.languages.CompletionItemProvider 
     const ctx = detectCompletionContext(model, position);
 
     let astSymbols: AstSymbols | null = null;
+    let scopeVisibleNames: string[] = [];
     try {
-      const parseResult = parseSysML(model.getValue());
-      if (parseResult.parserErrors.length === 0 && parseResult.lexerErrors.length === 0) {
+      const text = model.getValue();
+      const parseResult = parseSysML(text);
+      if (parseResult.parserErrors.length === 0 && parseResult.lexerErrors.length === 0 && parseResult.value && isNamespace(parseResult.value)) {
         astSymbols = extractAstSymbols(parseResult.value);
+        const scopeRoot = buildScopeTree(parseResult.value);
+        const scope = getScopeAtPosition(scopeRoot, parseResult.value, text, position.lineNumber - 1, position.column - 1);
+        if (scope) scopeVisibleNames = Array.from(scope.declarations.keys());
       }
     } catch {
       // Parse failed - use static completions only
@@ -213,11 +220,11 @@ export const sysmlv2CompletionProvider: monaco.languages.CompletionItemProvider 
     // ============ Context-specific completions ============
     
     switch (ctx.type) {
-      // Type references (after :, :>, ::>, etc.)
+      // Type references (after :, :>, ::>, etc.) - scope-visible + ast types
       case 'type': {
-        const typeItems = astSymbols?.typeNames?.length
-          ? astSymbols.typeNames
-          : SYSMLV2_TYPES;
+        const fromScope = scopeVisibleNames.length ? scopeVisibleNames : [];
+        const fromAst = astSymbols?.typeNames?.length ? astSymbols.typeNames : [];
+        const typeItems = [...new Set([...fromScope, ...fromAst])].length ? [...new Set([...fromScope, ...fromAst])] : SYSMLV2_TYPES;
         filterByPrefix(typeItems.map(t => 
           createItem(t, CompletionItemKind.Class, 'type', String(sortPriority++))
         ), ctx.currentWord).forEach(item => suggestions.push({ ...item, range }));

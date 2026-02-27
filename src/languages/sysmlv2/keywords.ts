@@ -31,7 +31,8 @@ export const SYSMLV2_KEYWORDS = [
   
   // Other
   'owned', 'exhibits', 'subject', 'comment',
-  'metadata', 'snapshot', 'stage'
+  'metadata', 'snapshot', 'stage',
+  'attribute', 'in', 'out'
 ];
 
 export const SYSMLV2_TYPES = [

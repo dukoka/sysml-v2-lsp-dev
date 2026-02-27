@@ -1,23 +1,7 @@
 import * as monaco from 'monaco-editor';
-
-// SysMLv2 keywords
-const SYSMLV2_KEYWORDS = [
-  'import', 'package', 'library', 'alias',
-  'def', 'definition', 'abstract', 'specialization',
-  'part', 'port', 'flow', 'connection', 'item',
-  'action', 'state', 'transition', 'event',
-  'type', 'enum', 'struct', 'datatype',
-  'actor', 'behavior', 'constraint',
-  'requirement', 'assumption', 'verification',
-  'generalization', 'reduction', 'feature',
-  'end', 'binding', 'succession', 'participation',
-  'if', 'else', 'while', 'for', 'return',
-  'true', 'false', 'null',
-  'public', 'private', 'protected', 'readonly',
-  'owned', 'exhibits', 'subject', 'comment',
-  'metadata', 'snapshot', 'stage',
-  'attribute', 'in', 'out'
-];
+import { SYSMLV2_KEYWORDS } from './keywords.js';
+import { parseSysML, parseResultToDiagnostics } from '../../grammar/parser.js';
+import { runSemanticValidation } from './semanticValidation.js';
 
 // ============ Extract user-defined types from document ============
 
@@ -75,6 +59,26 @@ export interface ValidationResult {
 
 // Simple validation patterns
 const validateText = (text: string): ValidationResult[] => {
+  // Parse-first: when parse succeeds, skip regex validation (same as sysmlLSPWorker)
+  try {
+    const parseResult = parseSysML(text);
+    if (parseResult.parserErrors.length === 0 && parseResult.lexerErrors.length === 0) {
+      const diags = parseResultToDiagnostics(parseResult) as Array<{ severity: number; range: { start: { line: number; character: number }; end: { line: number; character: number } }; message: string }>;
+      const semantic = runSemanticValidation(parseResult.value, text);
+      const toResult = (d: { severity: number; range: { start: { line: number; character: number }; end: { line: number; character: number } }; message: string }) => ({
+        severity: (d.severity === 1 || d.severity === 8) ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+        message: d.message,
+        startLine: d.range.start.line + 1,
+        startColumn: d.range.start.character + 1,
+        endLine: d.range.end.line + 1,
+        endColumn: d.range.end.character + 1
+      });
+      return [...diags.map(toResult), ...semantic.map(toResult)];
+    }
+  } catch {
+    // Parse failed - continue with regex-based validation
+  }
+
   const results: ValidationResult[] = [];
   const lines = text.split('\n');
   

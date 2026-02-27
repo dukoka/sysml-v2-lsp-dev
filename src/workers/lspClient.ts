@@ -130,6 +130,19 @@ class SysmlLSPClient {
     }
   }
 
+  /** G4 独立严格模式：仅 G4 解析诊断，不合并进主诊断。需配置 g4Validation 为 true 时调用。 */
+  async getG4Diagnostics(): Promise<any[]> {
+    try {
+      const result = await this.sendRequest('sysml/g4Diagnostics', {
+        textDocument: { uri: this.documentUri }
+      });
+      return Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.warn('G4 diagnostics not available:', e);
+      return [];
+    }
+  }
+
   async getCompletion(position: { line: number; character: number }): Promise<any[]> {
     try {
       const result = await this.sendRequest('textDocument/completion', {

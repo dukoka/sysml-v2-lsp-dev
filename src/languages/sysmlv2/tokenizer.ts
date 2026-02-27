@@ -1,23 +1,5 @@
 import * as monaco from 'monaco-editor';
-
-// Keywords as arrays for Monarch tokenizer
-const SYSMLV2_KEYWORDS = [
-  'import', 'package', 'library', 'alias',
-  'def', 'definition', 'abstract', 'specialization',
-  'part', 'port', 'flow', 'connection', 'item',
-  'action', 'state', 'transition', 'event',
-  'type', 'enum', 'struct', 'datatype',
-  'actor', 'behavior', 'constraint',
-  'requirement', 'assumption', 'verification',
-  'generalization', 'reduction', 'feature',
-  'end', 'binding', 'succession', 'participation',
-  'if', 'else', 'while', 'for', 'return',
-  'true', 'false', 'null',
-  'public', 'private', 'protected', 'readonly',
-  'owned', 'exhibits', 'subject', 'comment',
-  'metadata', 'snapshot', 'stage',
-  'attribute', 'in', 'out'
-];
+import { SYSMLV2_KEYWORDS } from './keywords.js';
 
 const SYSMLV2_TYPES = [
   'Boolean', 'Integer', 'Real', 'String', 'Natural', 'Positive',
