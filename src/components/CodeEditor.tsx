@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor';
-import { registerSysmlv2Language, registerSysmlv2Theme, SYSMLV2_LANGUAGE_ID } from '../languages/sysmlv2';
+import { registerSysmlv2Language, registerSysmlv2Theme, setSysmlv2LspClientGetter, SYSMLV2_LANGUAGE_ID } from '../languages/sysmlv2';
 import { createSysmlv2Validator } from '../languages/sysmlv2/validator';
 import { createSysmlLSPClient } from '../workers/lspClient';
 import { isG4ValidationEnabled } from '../grammar/config';
@@ -135,6 +135,7 @@ function CodeEditor({
             documentUri: LSP_DOCUMENT_URI,
           });
           lspClientRef.current = client;
+          setSysmlv2LspClientGetter(() => lspClientRef.current);
           await client.initialize();
           await client.openDocument(initialValue);
           useLsp = true;
@@ -236,6 +237,7 @@ function CodeEditor({
 
     return () => {
       mounted = false;
+      setSysmlv2LspClientGetter(null);
       if (diagnosticDebounceRef.current) {
         clearTimeout(diagnosticDebounceRef.current);
         diagnosticDebounceRef.current = null;

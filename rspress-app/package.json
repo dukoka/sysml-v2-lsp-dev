@@ -1,0 +1,22 @@
+{
+  "name": "rspress-app",
+  "version": "1.0.0",
+  "description": "Rspress 文档站点，管理 docs 目录",
+  "type": "module",
+  "scripts": {
+    "dev": "rspress dev",
+    "build": "rspress build",
+    "preview": "rspress preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@rspress/core": "^2.0.3",
+    "@rspress/plugin-twoslash": "^2.0.0",
+    "@rspress/plugin-llms": "^2.0.0",
+    "@rsbuild/plugin-less": "^1.6.0",
+    "rspress-plugin-mermaid": "^0.3.0",
+    "rspress-plugin-reading-time": "^0.3.0"
+  }
+}

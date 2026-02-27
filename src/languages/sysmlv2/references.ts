@@ -4,12 +4,18 @@
  */
 import type { Namespace, Element, Definition, Usage } from '../../grammar/generated/ast.js';
 import { isNamespace, isOwningMembership } from '../../grammar/generated/ast.js';
-import type { ScopeNode } from './scope.js';
-import { scopeLookup, buildScopeTree, getScopeAtPosition } from './scope.js';
+import type { ScopeNode, IndexEntryForLookup } from './scope.js';
+import { scopeLookup, buildScopeTree, getScopeAtPosition, scopeLookupInIndex } from './scope.js';
 import { getNodeRange, type AstRange } from '../../grammar/astUtils.js';
 
 /** 解析结果：引用指向的定义节点（同文件内）。 */
 export interface ResolvedDefinition {
+  node: Element;
+}
+
+/** 解析结果：引用指向的定义节点（可跨文件），带 uri。 */
+export interface ResolvedDefinitionWithUri {
+  uri: string;
   node: Element;
 }
 
@@ -18,6 +24,18 @@ export interface ResolvedDefinition {
  */
 export function resolveToDefinition(scope: ScopeNode | null, name: string): Element | undefined {
   return scopeLookup(scope, name);
+}
+
+/**
+ * 解析名称到定义（类型或成员），支持跨 URI；先当前 scope 再 index 内其他文档根级声明。
+ */
+export function resolveToDefinitionWithUri(
+  scopeRoot: ScopeNode | null,
+  name: string,
+  currentUri: string,
+  index: Map<string, IndexEntryForLookup>
+): ResolvedDefinitionWithUri | undefined {
+  return scopeLookupInIndex(currentUri, scopeRoot, name, index);
 }
 
 /** 判断 AST 节点是否为“对定义的引用”（如 PartUsage 的 type 指向 PartDefinition）。 */
@@ -138,4 +156,55 @@ export function getDefinitionAtPosition(root: unknown, text: string, line: numbe
   const resolved = name && scope ? resolveToDefinition(scope, name) : null;
   if (resolved) return resolved;
   return node;
+}
+
+/**
+ * 带 Index 的按位置解析定义，支持跨 URI；返回 { uri, node } 或 null。
+ */
+export function getDefinitionAtPositionWithUri(
+  root: unknown,
+  text: string,
+  line: number,
+  character: number,
+  currentUri: string,
+  index: Map<string, IndexEntryForLookup>
+): ResolvedDefinitionWithUri | null {
+  const scopeRoot = buildScopeTree(root);
+  const node = findNodeAtPosition(root, text, line, character);
+  if (!node) return null;
+  const scope = scopeRoot ? getScopeAtPosition(scopeRoot, root, text, line, character) : null;
+  const typeRange = getTypeReferenceRange(node, text);
+  if (typeRange && rangeContains(typeRange, line, character)) {
+    const typeName = getTypeReferenceName(node);
+    if (typeName) {
+      const resolved = resolveToDefinitionWithUri(scopeRoot, typeName, currentUri, index);
+      if (resolved) return resolved;
+    }
+  }
+  const name = (node as { declaredName?: string }).declaredName ?? (node as { declaredShortName?: string }).declaredShortName;
+  if (name) {
+    const resolved = resolveToDefinitionWithUri(scopeRoot, name, currentUri, index);
+    if (resolved) return resolved;
+  }
+  return { uri: currentUri, node };
+}
+
+/**
+ * 在多个文档中收集引用给定定义的所有节点，返回带 uri 的列表。
+ * index 需包含 root/text，见 IndexEntry（references 不直接依赖 indexManager，由调用方构建 index 视图）。
+ */
+export function findReferencesToDefinitionAcrossIndex(
+  index: Map<string, { root: Namespace | undefined; text: string; scopeRoot: ScopeNode | null }>,
+  definitionUri: string,
+  definitionNode: Element
+): ResolvedDefinitionWithUri[] {
+  const out: ResolvedDefinitionWithUri[] = [];
+  for (const [uri, entry] of index) {
+    if (!entry.root) continue;
+    const refs = findReferencesToDefinition(entry.root, definitionNode, entry.scopeRoot);
+    for (const node of refs) {
+      out.push({ uri, node });
+    }
+  }
+  return out;
 }

@@ -79,6 +79,39 @@ export function getNodeRange(node: unknown, text?: string): AstRange | undefined
   return undefined;
 }
 
+/**
+ * 获取 Element 的“名称”在文档中的 range（用于 rename / 高亮引用）。
+ * 在节点 range 内查找 declaredName 或 declaredShortName 的首次出现。
+ */
+export function getElementNameRange(element: unknown, text: string): AstRange | undefined {
+  const name = (element as { declaredName?: string }).declaredName ?? (element as { declaredShortName?: string }).declaredShortName;
+  if (!name) return undefined;
+  const nodeRange = getNodeRange(element, text);
+  if (!nodeRange) return undefined;
+  const startOffset = rangeToOffset(text, nodeRange.start);
+  const endOffset = rangeToOffset(text, nodeRange.end);
+  const slice = text.substring(startOffset, endOffset);
+  const idx = slice.indexOf(name);
+  if (idx < 0) return undefined;
+  const start = offsetToLineCharacter(text, startOffset + idx);
+  const end = offsetToLineCharacter(text, startOffset + idx + name.length);
+  return { start, end };
+}
+
+function rangeToOffset(text: string, pos: { line: number; character: number }): number {
+  let offset = 0;
+  let line = 0;
+  let character = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (line === pos.line && character === pos.character) return i;
+    if (text[i] === '\n') {
+      line++;
+      character = 0;
+    } else character++;
+  }
+  return text.length;
+}
+
 /** 将 AstRange（0-based）转为 Monaco 1-based range */
 export function astRangeToMonaco(range: AstRange): {
   startLineNumber: number;
@@ -211,4 +244,26 @@ export function getAstIndentLevels(root: unknown, text: string): (number | null)
     result[i] = maxDepth;
   }
   return result;
+}
+
+/** LSP 折叠区间（0-based startLine/endLine），仅多行块。 */
+export interface AstFoldingRange {
+  startLine: number;
+  endLine: number;
+}
+
+/**
+ * 从 AST 根生成折叠区间（与 documentSymbol/缩进一致）。
+ */
+export function getFoldingRanges(root: unknown, text: string | undefined): AstFoldingRange[] {
+  const out: AstFoldingRange[] = [];
+  if (!root || typeof root !== 'object' || !isNamespace(root)) return out;
+  const spans: IndentSpan[] = [];
+  const rootRange = getNodeRange(root, text);
+  if (rootRange) spans.push({ startLine: rootRange.start.line, endLine: rootRange.end.line, depth: 0 });
+  collectIndentSpans(root, text, 1, spans);
+  for (const s of spans) {
+    if (s.endLine > s.startLine) out.push({ startLine: s.startLine, endLine: s.endLine });
+  }
+  return out;
 }

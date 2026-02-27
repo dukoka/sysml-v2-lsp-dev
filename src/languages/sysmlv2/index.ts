@@ -23,6 +23,17 @@ import { getDefinitionAtPosition, findReferencesToDefinition, findNodeAtPosition
 // Language ID
 export const SYSMLV2_LANGUAGE_ID = 'sysmlv2';
 
+/** 阶段 H：LSP 为能力唯一源。CodeEditor 在 LSP 就绪后调用 setSysmlv2LspClientGetter，Provider 优先使用 LSP。 */
+type LspClientLike = {
+  getDefinition(p: { line: number; character: number }): Promise<any>;
+  getReferences(p: { line: number; character: number }, includeDeclaration?: boolean): Promise<any[]>;
+  getRename(p: { line: number; character: number }, newName: string): Promise<any>;
+};
+let _lspClientGetter: (() => LspClientLike | null) | null = null;
+export function setSysmlv2LspClientGetter(getter: (() => LspClientLike | null) | null) {
+  _lspClientGetter = getter;
+}
+
 const DEF_PATTERNS_FOR_DUPE: Array<RegExp> = [
   /^\s*(part|port|action|state|flow|item|connection|constraint|actor|behavior)\s+def\s+(\w+)/i,
   /^\s*requirement\s+(\w+)/i,
@@ -304,9 +315,25 @@ export const registerSysmlv2Language = () => {
     }
   });
 
-  // Register definition provider (Go to Definition) - AST+scope when parse succeeds
+  // Register definition provider (Go to Definition) - 优先 LSP，否则 AST+scope / symbols
   monaco.languages.registerDefinitionProvider(SYSMLV2_LANGUAGE_ID, {
-    provideDefinition: (model, position) => {
+    provideDefinition: async (model, position) => {
+      const client = _lspClientGetter?.() ?? null;
+      if (client) {
+        try {
+          const pos = { line: position.lineNumber - 1, character: position.column - 1 };
+          const result = await client.getDefinition(pos);
+          if (result) {
+            const locs = Array.isArray(result) ? result : [result];
+            return locs.map((loc: { uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } }) => ({
+              uri: monaco.Uri.parse(loc.uri),
+              range: { startLineNumber: loc.range.start.line + 1, startColumn: loc.range.start.character + 1, endLineNumber: loc.range.end.line + 1, endColumn: loc.range.end.character + 1 }
+            }));
+          }
+        } catch {
+          // fall through to local
+        }
+      }
       const text = model.getValue();
       const line = position.lineNumber - 1;
       const character = position.column - 1;
@@ -345,9 +372,24 @@ export const registerSysmlv2Language = () => {
     }
   });
 
-  // Register reference provider (Find References) - AST+scope when parse succeeds
+  // Register reference provider (Find References) - 优先 LSP，否则 AST+scope / symbols
   monaco.languages.registerReferenceProvider(SYSMLV2_LANGUAGE_ID, {
-    provideReferences: (model, position, context) => {
+    provideReferences: async (model, position, context) => {
+      const client = _lspClientGetter?.() ?? null;
+      if (client) {
+        try {
+          const pos = { line: position.lineNumber - 1, character: position.column - 1 };
+          const locations = await client.getReferences(pos, context.includeDeclaration);
+          if (locations.length > 0) {
+            return locations.map((loc: { uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } }) => ({
+              uri: monaco.Uri.parse(loc.uri),
+              range: { startLineNumber: loc.range.start.line + 1, startColumn: loc.range.start.character + 1, endLineNumber: loc.range.end.line + 1, endColumn: loc.range.end.character + 1 }
+            }));
+          }
+        } catch {
+          // fall through
+        }
+      }
       const text = model.getValue();
       const line = position.lineNumber - 1;
       const character = position.column - 1;
@@ -374,7 +416,7 @@ export const registerSysmlv2Language = () => {
       }
       const symbols = parseSymbols(text);
       const word = model.getWordAtPosition(position);
-      if (!word) return null;
+      if (!word) return [];
       const symbolInfo = findSymbolAtPosition(symbols, position.lineNumber, word.startColumn);
       const refs = findReferences(symbols, symbolInfo?.name ?? word.word);
       return refs.map(ref => ({
@@ -389,9 +431,34 @@ export const registerSysmlv2Language = () => {
     }
   });
 
-  // Register rename provider (Rename Symbol) - AST+scope when parse succeeds
+  // Register rename provider (Rename Symbol) - 优先 LSP，否则 AST+scope / 全文同名
   monaco.languages.registerRenameProvider(SYSMLV2_LANGUAGE_ID, {
-    provideRenameEdits: (model, position, newName) => {
+    provideRenameEdits: async (model, position, newName) => {
+      const client = _lspClientGetter?.() ?? null;
+      if (client) {
+        try {
+          const pos = { line: position.lineNumber - 1, character: position.column - 1 };
+          const we = await client.getRename(pos, newName);
+          if (we?.changes) {
+            const edits: monaco.languages.IWorkspaceTextEdit[] = [];
+            for (const [uri, textEdits] of Object.entries(we.changes)) {
+              for (const te of textEdits as Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; newText: string }>) {
+                edits.push({
+                  resource: monaco.Uri.parse(uri),
+                  textEdit: {
+                    range: { startLineNumber: te.range.start.line + 1, startColumn: te.range.start.character + 1, endLineNumber: te.range.end.line + 1, endColumn: te.range.end.character + 1 },
+                    text: te.newText
+                  },
+                  versionId: undefined
+                });
+              }
+            }
+            if (edits.length > 0) return { edits };
+          }
+        } catch {
+          // fall through
+        }
+      }
       const text = model.getValue();
       const line = position.lineNumber - 1;
       const character = position.column - 1;

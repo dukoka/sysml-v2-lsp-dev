@@ -1,6 +1,11 @@
 # SysMLv2 语言编辑器
 
-基于 React + Monaco Editor + Web Worker LSP 的 SysMLv2 语言编辑器。
+基于 React + Monaco Editor + Web Worker LSP 的 SysMLv2 语言编辑器，纯浏览器运行，无需 Node 后端。
+
+## 文档
+
+- **[项目结构说明](docs/project-structure.md)**：目录与模块说明、数据流、构建产物与依赖。
+- **[使用说明](docs/usage-guide.md)**：安装、运行、LSP 功能详解、配置、测试、嵌入与故障排除。
 
 ## 功能特性
 
@@ -44,18 +49,24 @@
 
 ### 3. LSP 功能（Web Worker 实现）
 
-纯浏览器环境下使用 Web Worker 实现 LSP 服务，无需 Node.js 后端。
+纯浏览器环境下使用 Web Worker 实现 LSP 服务，无需 Node.js 后端。支持多文件索引与跨 URI 引用解析（阶段 G/H）。
 
 #### 已实现的 LSP 功能
 
 | 功能 | 说明 |
 |------|------|
-| 语法验证 | 实时检测代码错误 |
-| 关键字拼写检查 | 检测类似关键字的拼写错误（如 `defk` → `def`） |
-| 括号匹配检查 | 检测未闭合的 `{}`、`[]`、`()` |
-| 字符串字面量检查 | 检测未闭合的字符串 |
-| 注释检查 | 检测未闭合的块注释 |
-| 标识符验证 | 检测以数字开头的无效标识符 |
+| 诊断 | 实时语法/语义校验；关键字拼写建议、括号/字符串/注释匹配、未解析类型、重复定义等 |
+| 补全 | 上下文敏感补全（关键字、类型、包名、part/port/属性名等），`Ctrl+Space` 或 `.` `:` `(` 触发 |
+| 悬停 | 标识符悬停说明 |
+| 跳转定义 | `F12` 或 `Ctrl+Click`，支持类型引用与符号定义，可跨文件（多 URI 索引时） |
+| 查找引用 | `Shift+F12`，可包含定义处，支持多文件 |
+| 重命名 | `F2`，重命名定义及所有引用，支持多文件 WorkspaceEdit |
+| 文档符号 | 大纲（包、part def、port def、属性等层级） |
+| 折叠 | 按 AST 块折叠 |
+| 语义高亮 | 定义/类型/属性等语义 token |
+| 签名帮助 | 内置函数（如 `println`、`assert`）参数提示 |
+| 代码操作 | 快速修复：插入分号、纠错关键字、未解析类型添加桩、重复定义跳转第一处等 |
+| 格式化 | 整篇/选中区域格式化 |
 
 #### 拼写纠错示例
 ```
@@ -64,24 +75,21 @@
 输入: requiremnt →  提示: Unknown keyword 'requiremnt'. Did you mean 'requirement'?
 ```
 
-## 项目结构
+## 项目结构概览
 
 ```
 src/
-├── components/
-│   └── CodeEditor.tsx      # Monaco Editor 组件
-├── languages/
-│   └── sysmlv2/
-│       ├── index.ts        # 语言注册
-│       ├── tokenizer.ts   # 词法分析器（Monarch）
-│       ├── completion.ts   # 自动完成提供者
-│       ├── validator.ts   # 语法验证器
-│       └── keywords.ts    # 关键字定义
+├── components/CodeEditor.tsx   # 编辑器封装（Monaco + LSP Worker + 诊断）
 ├── workers/
-│   ├── sysmlLSPWorker.ts # Web Worker LSP 服务器
-│   └── lspClient.ts     # LSP 客户端
-└── App.jsx               # 主应用
+│   ├── sysmlLSPWorker.ts       # LSP 服务端（Index、definition/references/rename/documentSymbol/…）
+│   ├── indexManager.ts         # 多文件索引（uri → root, scopeRoot）
+│   └── lspClient.ts            # LSP 客户端（JSON-RPC）
+├── languages/sysmlv2/          # 词法、补全、Scope、引用、文档符号、语义高亮、格式化等
+├── grammar/                    # Langium 解析、AST 工具、G4、配置
+└── App.jsx
 ```
+
+完整目录与模块说明见 **[docs/project-structure.md](docs/project-structure.md)**。
 
 ## 技术实现
 
@@ -111,13 +119,14 @@ npm run dev
 npm run build
 ```
 
-## 使用说明
+## 快速开始
 
-1. 启动应用后，编辑器自动加载 SysMLv2 示例代码
-2. 输入代码时自动显示关键字高亮
-3. 按 `Ctrl+Space` 或输入 `.` 触发自动完成
-4. 拼写错误会实时显示红色波浪线
-5. 鼠标悬停查看错误详情
+```bash
+npm install
+npm run dev
+```
+
+浏览器打开终端提示的地址（如 `http://localhost:5173`）即可使用。更多操作与 LSP 功能说明见 **[docs/usage-guide.md](docs/usage-guide.md)**。
 
 ## 示例代码
 

@@ -168,6 +168,109 @@ class SysmlLSPClient {
     }
   }
 
+  /** 阶段 G：跳转定义。position 为 LSP 0-based line/character。返回 Location 或 Location[]。 */
+  async getDefinition(position: { line: number; character: number }): Promise<{ uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } } | { uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } }[] | null> {
+    try {
+      return await this.sendRequest('textDocument/definition', {
+        textDocument: { uri: this.documentUri },
+        position
+      });
+    } catch (e) {
+      console.error('Failed to get definition:', e);
+      return null;
+    }
+  }
+
+  /** 阶段 G：查找引用。position 为 LSP 0-based；includeDeclaration 是否包含定义处。 */
+  async getReferences(position: { line: number; character: number }, includeDeclaration = false): Promise<Array<{ uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } }>> {
+    try {
+      const result = await this.sendRequest('textDocument/references', {
+        textDocument: { uri: this.documentUri },
+        position,
+        context: { includeDeclaration }
+      });
+      return Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.error('Failed to get references:', e);
+      return [];
+    }
+  }
+
+  /** 阶段 G：重命名。position 为 LSP 0-based；返回 WorkspaceEdit { changes }。 */
+  async getRename(position: { line: number; character: number }, newName: string): Promise<{ changes: Record<string, Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; newText: string }>> } | null> {
+    try {
+      return await this.sendRequest('textDocument/rename', {
+        textDocument: { uri: this.documentUri },
+        position,
+        newName
+      });
+    } catch (e) {
+      console.error('Failed to rename:', e);
+      return null;
+    }
+  }
+
+  /** 阶段 H：文档符号（大纲）。 */
+  async getDocumentSymbols(): Promise<Array<{ name: string; detail?: string; kind: number; range: { start: { line: number; character: number }; end: { line: number; character: number } }; selectionRange?: { start: { line: number; character: number }; end: { line: number; character: number } }; children?: any[] }>> {
+    try {
+      const result = await this.sendRequest('textDocument/documentSymbol', { textDocument: { uri: this.documentUri } });
+      return Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.error('Failed to get document symbols:', e);
+      return [];
+    }
+  }
+
+  /** 阶段 H：折叠区间。 */
+  async getFoldingRanges(): Promise<Array<{ startLine: number; endLine?: number }>> {
+    try {
+      const result = await this.sendRequest('textDocument/foldingRange', { textDocument: { uri: this.documentUri } });
+      return Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.error('Failed to get folding ranges:', e);
+      return [];
+    }
+  }
+
+  /** 阶段 H：语义 token 数据（delta 编码数组）。 */
+  async getSemanticTokens(): Promise<number[]> {
+    try {
+      const result = await this.sendRequest('textDocument/semanticTokens/full', { textDocument: { uri: this.documentUri } });
+      return result?.data ?? [];
+    } catch (e) {
+      console.error('Failed to get semantic tokens:', e);
+      return [];
+    }
+  }
+
+  /** 阶段 H：签名帮助。position 为 LSP 0-based。 */
+  async getSignatureHelp(position: { line: number; character: number }): Promise<{ signatures: Array<{ label: string; documentation?: string; parameters?: Array<{ label: string }> }>; activeSignature: number; activeParameter: number } | null> {
+    try {
+      return await this.sendRequest('textDocument/signatureHelp', {
+        textDocument: { uri: this.documentUri },
+        position
+      });
+    } catch (e) {
+      console.error('Failed to get signature help:', e);
+      return null;
+    }
+  }
+
+  /** 阶段 H：代码操作。range 与 diagnostics 为 LSP 格式。 */
+  async getCodeActions(range: { start: { line: number; character: number }; end: { line: number; character: number } }, diagnostics: Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; message: string }>): Promise<Array<{ title: string; kind?: string; edit?: any; command?: any }>> {
+    try {
+      const result = await this.sendRequest('textDocument/codeAction', {
+        textDocument: { uri: this.documentUri },
+        range,
+        context: { diagnostics }
+      });
+      return Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.error('Failed to get code actions:', e);
+      return [];
+    }
+  }
+
   async formatDocument(options?: { tabSize?: number; insertSpaces?: boolean }): Promise<Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; newText: string }>> {
     try {
       const edits = await this.sendRequest('textDocument/formatting', {

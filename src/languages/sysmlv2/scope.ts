@@ -80,6 +80,33 @@ export function scopeLookup(scope: ScopeNode | null, name: string): Element | un
   return BUILTIN_TYPES.has(name) ? undefined : undefined;
 }
 
+/** 供跨 URI 查找使用的索引项（仅需 scopeRoot，避免 scope 依赖 indexManager）。 */
+export interface IndexEntryForLookup {
+  scopeRoot: ScopeNode | null;
+}
+
+/**
+ * 先当前文档 scope 查找，未命中时在 index 其他文档的根级声明中按 name 查找。
+ * 返回 { uri, node } 或 undefined。
+ */
+export function scopeLookupInIndex(
+  currentUri: string,
+  scopeRoot: ScopeNode | null,
+  name: string,
+  index: Map<string, IndexEntryForLookup>
+): { uri: string; node: Element } | undefined {
+  const local = scopeLookup(scopeRoot, name);
+  if (local) return { uri: currentUri, node: local };
+  for (const [uri, entry] of index) {
+    if (uri === currentUri) continue;
+    if (entry.scopeRoot) {
+      const node = entry.scopeRoot.declarations.get(name);
+      if (node) return { uri, node };
+    }
+  }
+  return undefined;
+}
+
 /** 收集所有在给定 range 内包含 (line, character) 的 Namespace 节点（由外到内）。 */
 function namespacesContaining(
   ns: Namespace,

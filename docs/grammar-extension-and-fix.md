@@ -42,7 +42,7 @@
 
 以下代码应无诊断错误：
 
-```sysml
+```text
 package VehicleExample {
   // Part definitions
   part def Vehicle {
