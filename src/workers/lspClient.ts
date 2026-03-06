@@ -16,7 +16,11 @@ class SysmlLSPClient {
   private pendingRequests = new Map<number | string, any>();
   private requestId = 0;
   private initialized = false;
-  private documentOpen = false;
+  private openDocuments = new Set<string>();
+
+  get documentOpen(): boolean {
+    return this.openDocuments.has(this.documentUri);
+  }
 
   constructor(options: LSPClientOptions) {
     this.worker = options.worker;
@@ -80,8 +84,12 @@ class SysmlLSPClient {
     return result;
   }
 
+  setDocumentUri(uri: string): void {
+    this.documentUri = uri;
+  }
+
   async openDocument(content: string): Promise<void> {
-    if (this.documentOpen) return;
+    if (this.openDocuments.has(this.documentUri)) return;
 
     this.sendNotification('textDocument/didOpen', {
       textDocument: {
@@ -91,11 +99,11 @@ class SysmlLSPClient {
         text: content
       }
     });
-    this.documentOpen = true;
+    this.openDocuments.add(this.documentUri);
   }
 
   async updateDocument(content: string, version: number): Promise<void> {
-    if (!this.documentOpen) {
+    if (!this.openDocuments.has(this.documentUri)) {
       await this.openDocument(content);
       return;
     }
@@ -110,12 +118,12 @@ class SysmlLSPClient {
   }
 
   async closeDocument(): Promise<void> {
-    if (!this.documentOpen) return;
+    if (!this.openDocuments.has(this.documentUri)) return;
 
     this.sendNotification('textDocument/didClose', {
       textDocument: { uri: this.documentUri }
     });
-    this.documentOpen = false;
+    this.openDocuments.delete(this.documentUri);
   }
 
   async getDiagnostics(): Promise<any[]> {
@@ -281,6 +289,121 @@ class SysmlLSPClient {
     } catch (e) {
       console.error('Failed to format:', e);
       return [];
+    }
+  }
+
+  async getTypeDefinition(position: { line: number; character: number }): Promise<{ uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } } | null> {
+    try {
+      return await this.sendRequest('textDocument/typeDefinition', {
+        textDocument: { uri: this.documentUri },
+        position
+      });
+    } catch (e) {
+      console.error('Failed to get type definition:', e);
+      return null;
+    }
+  }
+
+  async getCodeLens(): Promise<Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; command?: { title: string; command: string; arguments?: unknown[] } }>> {
+    try {
+      const result = await this.sendRequest('textDocument/codeLens', {
+        textDocument: { uri: this.documentUri }
+      });
+      return Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.error('Failed to get code lens:', e);
+      return [];
+    }
+  }
+
+  async getDocumentHighlights(position: { line: number; character: number }): Promise<Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; kind?: number }>> {
+    try {
+      const result = await this.sendRequest('textDocument/documentHighlight', {
+        textDocument: { uri: this.documentUri },
+        position
+      });
+      return Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.error('Failed to get document highlights:', e);
+      return [];
+    }
+  }
+
+  async getWorkspaceSymbols(query: string): Promise<Array<{ name: string; kind: number; location: { uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } }; containerName?: string }>> {
+    try {
+      const result = await this.sendRequest('workspace/symbol', { query });
+      return Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.error('Failed to get workspace symbols:', e);
+      return [];
+    }
+  }
+
+  async getInlayHints(range: { start: { line: number; character: number }; end: { line: number; character: number } }): Promise<Array<{ position: { line: number; character: number }; label: string; kind?: number; paddingLeft?: boolean }>> {
+    try {
+      const result = await this.sendRequest('textDocument/inlayHint', {
+        textDocument: { uri: this.documentUri },
+        range
+      });
+      return Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.error('Failed to get inlay hints:', e);
+      return [];
+    }
+  }
+
+  async getOnTypeFormatting(position: { line: number; character: number }, ch: string, options?: { tabSize?: number; insertSpaces?: boolean }): Promise<Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; newText: string }>> {
+    try {
+      const result = await this.sendRequest('textDocument/onTypeFormatting', {
+        textDocument: { uri: this.documentUri },
+        position,
+        ch,
+        options: options ?? { tabSize: 2, insertSpaces: true }
+      });
+      return Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.error('Failed to get on-type formatting:', e);
+      return [];
+    }
+  }
+
+  async formatDocumentRange(range: { start: { line: number; character: number }; end: { line: number; character: number } }, options?: { tabSize?: number; insertSpaces?: boolean }): Promise<Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; newText: string }>> {
+    try {
+      const result = await this.sendRequest('textDocument/rangeFormatting', {
+        textDocument: { uri: this.documentUri },
+        range,
+        options: options ?? { tabSize: 2, insertSpaces: true }
+      });
+      return Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.error('Failed to format document range:', e);
+      return [];
+    }
+  }
+
+  async getSelectionRanges(positions: Array<{ line: number; character: number }>): Promise<Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; parent?: any }>> {
+    try {
+      const result = await this.sendRequest('textDocument/selectionRange', {
+        textDocument: { uri: this.documentUri },
+        positions
+      });
+      return Array.isArray(result) ? result : [];
+    } catch (e) {
+      console.error('Failed to get selection ranges:', e);
+      return [];
+    }
+  }
+
+  async getLinkedEditingRanges(position: { line: number; character: number }): Promise<{ ranges: Array<{ start: { line: number; character: number }; end: { line: number; character: number } }>; wordPattern?: string } | null> {
+    try {
+      const result = await this.sendRequest('textDocument/linkedEditingRange', {
+        textDocument: { uri: this.documentUri },
+        position
+      });
+      return result as any ?? null;
+    } catch (e) {
+      console.error('Failed to get linked editing ranges:', e);
+      return null;
     }
   }
 }
