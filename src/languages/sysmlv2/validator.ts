@@ -55,6 +55,7 @@ export interface ValidationResult {
   startColumn: number;
   endLine: number;
   endColumn: number;
+  tags?: monaco.MarkerTag[];
 }
 
 // Simple validation patterns
@@ -65,13 +66,24 @@ const validateText = (text: string): ValidationResult[] => {
     if (parseResult.parserErrors.length === 0 && parseResult.lexerErrors.length === 0) {
       const diags = parseResultToDiagnostics(parseResult) as Array<{ severity: number; range: { start: { line: number; character: number }; end: { line: number; character: number } }; message: string }>;
       const semantic = runSemanticValidation(parseResult.value, text);
-      const toResult = (d: { severity: number; range: { start: { line: number; character: number }; end: { line: number; character: number } }; message: string }) => ({
-        severity: (d.severity === 1 || d.severity === 8) ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+      const mapSeverity = (s: number) => {
+        if (s === 1 || s === 8) return monaco.MarkerSeverity.Error;
+        if (s === 2) return monaco.MarkerSeverity.Warning;
+        if (s === 3) return monaco.MarkerSeverity.Info;
+        return monaco.MarkerSeverity.Hint; // LSP Hint (4) -> Monaco Hint (1)
+      };
+      const mapTags = (tags?: number[]): monaco.MarkerTag[] | undefined => {
+        if (!tags?.length) return undefined;
+        return tags.map(t => t === 1 ? monaco.MarkerTag.Unnecessary : monaco.MarkerTag.Deprecated);
+      };
+      const toResult = (d: { severity: number; range: { start: { line: number; character: number }; end: { line: number; character: number } }; message: string; tags?: number[] }): ValidationResult => ({
+        severity: mapSeverity(d.severity),
         message: d.message,
         startLine: d.range.start.line + 1,
         startColumn: d.range.start.character + 1,
         endLine: d.range.end.line + 1,
-        endColumn: d.range.end.character + 1
+        endColumn: d.range.end.character + 1,
+        ...(mapTags(d.tags) ? { tags: mapTags(d.tags) } : {})
       });
       return [...diags.map(toResult), ...semantic.map(toResult)];
     }

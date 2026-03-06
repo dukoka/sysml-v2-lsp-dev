@@ -18,16 +18,36 @@ import { parseSysML } from '../../grammar/parser.js';
 import { isNamespace } from '../../grammar/generated/ast.js';
 import { getNodeRange, astRangeToMonaco } from '../../grammar/astUtils.js';
 import { buildScopeTree } from './scope.js';
-import { getDefinitionAtPosition, findReferencesToDefinition, findNodeAtPosition } from './references.js';
+import { getDefinitionAtPosition, findReferencesToDefinition } from './references.js';
+import { sysmlv2InlayHintsProvider } from './inlayHints';
 
 // Language ID
 export const SYSMLV2_LANGUAGE_ID = 'sysmlv2';
 
-/** 阶段 H：LSP 为能力唯一源。CodeEditor 在 LSP 就绪后调用 setSysmlv2LspClientGetter，Provider 优先使用 LSP。 */
+type LspLocation = { uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } };
+type LspTextEdit = { range: { start: { line: number; character: number }; end: { line: number; character: number } }; newText: string };
+
 type LspClientLike = {
-  getDefinition(p: { line: number; character: number }): Promise<any>;
-  getReferences(p: { line: number; character: number }, includeDeclaration?: boolean): Promise<any[]>;
-  getRename(p: { line: number; character: number }, newName: string): Promise<any>;
+  getDefinition(p: { line: number; character: number }): Promise<LspLocation | LspLocation[] | null>;
+  getReferences(p: { line: number; character: number }, includeDeclaration?: boolean): Promise<LspLocation[]>;
+  getRename(p: { line: number; character: number }, newName: string): Promise<{ changes: Record<string, LspTextEdit[]> } | null>;
+  getCompletion(p: { line: number; character: number }): Promise<any[]>;
+  getHover(p: { line: number; character: number }): Promise<{ contents: { kind: string; value: string }; range?: { start: { line: number; character: number }; end: { line: number; character: number } } } | null>;
+  getDocumentSymbols(): Promise<any[]>;
+  getFoldingRanges(): Promise<Array<{ startLine: number; endLine?: number }>>;
+  getSemanticTokens(): Promise<number[]>;
+  getSignatureHelp(p: { line: number; character: number }): Promise<{ signatures: Array<{ label: string; documentation?: string; parameters?: Array<{ label: string; documentation?: string }> }>; activeSignature: number; activeParameter: number } | null>;
+  getCodeActions(range: { start: { line: number; character: number }; end: { line: number; character: number } }, diagnostics: Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; message: string }>): Promise<Array<{ title: string; kind?: string; edit?: any; command?: any }>>;
+  formatDocument(options?: { tabSize?: number; insertSpaces?: boolean }): Promise<LspTextEdit[]>;
+  getDocumentHighlights(p: { line: number; character: number }): Promise<Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; kind?: number }>>;
+  getTypeDefinition(p: { line: number; character: number }): Promise<{ uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } } | null>;
+  getCodeLens(): Promise<Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; command?: { title: string; command: string; arguments?: unknown[] } }>>;
+  getWorkspaceSymbols(query: string): Promise<Array<{ name: string; kind: number; location: { uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } }; containerName?: string }>>;
+  getInlayHints(range: { start: { line: number; character: number }; end: { line: number; character: number } }): Promise<Array<{ position: { line: number; character: number }; label: string; kind?: number; paddingLeft?: boolean }>>;
+  getOnTypeFormatting(position: { line: number; character: number }, ch: string, options?: { tabSize?: number; insertSpaces?: boolean }): Promise<LspTextEdit[]>;
+  formatDocumentRange(range: { start: { line: number; character: number }; end: { line: number; character: number } }, options?: { tabSize?: number; insertSpaces?: boolean }): Promise<LspTextEdit[]>;
+  getSelectionRanges(positions: Array<{ line: number; character: number }>): Promise<Array<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; parent?: any }>>;
+  getLinkedEditingRanges(p: { line: number; character: number }): Promise<{ ranges: Array<{ start: { line: number; character: number }; end: { line: number; character: number } }>; wordPattern?: string } | null>;
 };
 let _lspClientGetter: (() => LspClientLike | null) | null = null;
 export function setSysmlv2LspClientGetter(getter: (() => LspClientLike | null) | null) {
@@ -100,61 +120,121 @@ export const registerSysmlv2Language = () => {
     sysmlv2Language as any
   );
 
-  // Semantic tokens (definition names, types)
-  monaco.languages.registerDocumentSemanticTokensProvider(
-    SYSMLV2_LANGUAGE_ID,
-    sysmlv2SemanticTokensProvider
-  );
+  // SemanticTokens — LSP first, then local fallback
+  monaco.languages.registerDocumentSemanticTokensProvider(SYSMLV2_LANGUAGE_ID, {
+    getLegend: () => sysmlv2SemanticTokensProvider.getLegend(),
+    provideDocumentSemanticTokens: async (model) => {
+      const client = _lspClientGetter?.() ?? null;
+      if (client) {
+        try {
+          const data = await client.getSemanticTokens();
+          if (data?.length) return { data: new Uint32Array(data) };
+        } catch { /* fall through */ }
+      }
+      return sysmlv2SemanticTokensProvider.provideDocumentSemanticTokens(model, null, {} as any);
+    },
+    releaseDocumentSemanticTokens: () => {}
+  });
 
-  // Inlay hints: currently disabled due to instability with Monaco's InlayHints lifecycle.
-  // The provider implementation is kept in `inlayHints.ts` for future use, but not registered here.
-
-  // Register completion provider
-  monaco.languages.registerCompletionItemProvider(
-    SYSMLV2_LANGUAGE_ID,
-    sysmlv2CompletionProvider
-  );
-
-  // Hover provider - AST node info when parse succeeds, else symbols
-  monaco.languages.registerHoverProvider(SYSMLV2_LANGUAGE_ID, {
-    provideHover: (model, position) => {
-      const word = model.getWordAtPosition(position);
-      if (!word) return null;
-      const text = model.getValue();
-      const line = position.lineNumber - 1;
-      const character = position.column - 1;
-      try {
-        const parseResult = parseSysML(text);
-        if (parseResult.parserErrors.length === 0 && parseResult.lexerErrors.length === 0 && parseResult.value) {
-          const node = findNodeAtPosition(parseResult.value, text, line, character);
-          if (node) {
-            const typeName = (node as { $type?: string }).$type ?? 'Element';
-            const name = (node as { declaredName?: string }).declaredName ?? (node as { declaredShortName?: string }).declaredShortName ?? word.word;
-            const detail = `${typeName}${name ? ` **${name}**` : ''}`;
+  // Inlay hints — LSP first, local fallback
+  monaco.languages.registerInlayHintsProvider(SYSMLV2_LANGUAGE_ID, {
+    provideInlayHints: async (model, range) => {
+      const lspRange = {
+        start: { line: range.startLineNumber - 1, character: range.startColumn - 1 },
+        end: { line: range.endLineNumber - 1, character: range.endColumn - 1 }
+      };
+      const lsp = _lspClientGetter?.();
+      if (lsp) {
+        try {
+          const lspHints = await lsp.getInlayHints(lspRange);
+          if (lspHints.length > 0) {
             return {
-              range: {
-                startLineNumber: position.lineNumber,
-                endLineNumber: position.lineNumber,
-                startColumn: word.startColumn,
-                endColumn: word.endColumn
-              },
-              contents: [
-                { value: `**${word.word}**` },
-                { value: detail }
-              ]
+              hints: lspHints.map(h => ({
+                label: h.label,
+                position: new monaco.Position(h.position.line + 1, h.position.character + 1),
+                kind: h.kind === 2 ? monaco.languages.InlayHintKind.Parameter : monaco.languages.InlayHintKind.Type,
+                paddingLeft: h.paddingLeft ?? false
+              })),
+              dispose: () => {}
             };
           }
-        }
-      } catch {
-        // fall through
+        } catch { /* fall through to local */ }
       }
+      return sysmlv2InlayHintsProvider.provideInlayHints(model, range, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) });
+    }
+  });
+
+  // Completion provider — LSP first, then local fallback
+  monaco.languages.registerCompletionItemProvider(SYSMLV2_LANGUAGE_ID, {
+    triggerCharacters: sysmlv2CompletionProvider.triggerCharacters,
+    provideCompletionItems: async (model, position, context, token) => {
+      const client = _lspClientGetter?.() ?? null;
+      if (client) {
+        try {
+          const items = await client.getCompletion({ line: position.lineNumber - 1, character: position.column - 1 });
+          if (items && items.length > 0) {
+            const word = model.getWordUntilPosition(position);
+            const range = {
+              startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+              startColumn: word.startColumn, endColumn: word.endColumn
+            };
+            const KIND_MAP: Record<number, monaco.languages.CompletionItemKind> = {
+              1: monaco.languages.CompletionItemKind.Text,
+              6: monaco.languages.CompletionItemKind.Variable,
+              7: monaco.languages.CompletionItemKind.Class,
+              9: monaco.languages.CompletionItemKind.Module,
+              14: monaco.languages.CompletionItemKind.Keyword,
+              15: monaco.languages.CompletionItemKind.Snippet,
+              3: monaco.languages.CompletionItemKind.Function
+            };
+            return {
+              suggestions: items.map((item: any, i: number) => ({
+                label: item.label,
+                kind: KIND_MAP[item.kind] ?? monaco.languages.CompletionItemKind.Text,
+                insertText: item.insertText ?? item.label,
+                insertTextRules: item.insertTextFormat === 2 ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+                detail: item.detail,
+                sortText: String(i).padStart(4, '0'),
+                range
+              }))
+            };
+          }
+        } catch { /* fall through */ }
+      }
+      return sysmlv2CompletionProvider.provideCompletionItems(model, position, context, token);
+    }
+  });
+
+  // Hover provider — LSP first, then local AST/symbols fallback
+  monaco.languages.registerHoverProvider(SYSMLV2_LANGUAGE_ID, {
+    provideHover: async (model, position) => {
+      const word = model.getWordAtPosition(position);
+      if (!word) return null;
+      const wordRange = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn
+      };
+      const client = _lspClientGetter?.() ?? null;
+      if (client) {
+        try {
+          const result = await client.getHover({ line: position.lineNumber - 1, character: position.column - 1 });
+          if (result?.contents) {
+            const range = result.range
+              ? { startLineNumber: result.range.start.line + 1, startColumn: result.range.start.character + 1, endLineNumber: result.range.end.line + 1, endColumn: result.range.end.character + 1 }
+              : wordRange;
+            return { range, contents: [{ value: result.contents.value }] };
+          }
+        } catch { /* fall through */ }
+      }
+      const text = model.getValue();
       const symbols = parseSymbols(text);
       const symbolInfo = findSymbolAtPosition(symbols, position.lineNumber, position.column);
       let detail = 'SysMLv2 identifier';
       if (symbolInfo) {
         if (symbolInfo.kind === 'definition') {
-          const container = symbolInfo.container ?? 'element';
-          detail = `${container.charAt(0).toUpperCase() + container.slice(1)} definition`;
+          detail = `${(symbolInfo.container ?? 'element').replace(/^./, c => c.toUpperCase())} definition`;
         } else if (symbolInfo.kind === 'reference') {
           const def = findDefinition(symbols, symbolInfo.name);
           detail = def ? `Reference to ${def.container ?? 'definition'}` : 'Reference';
@@ -162,155 +242,51 @@ export const registerSysmlv2Language = () => {
           detail = 'Type';
         }
       }
-      return {
-        range: {
-          startLineNumber: position.lineNumber,
-          endLineNumber: position.lineNumber,
-          startColumn: word.startColumn,
-          endColumn: word.endColumn
-        },
-        contents: [
-          { value: `**${word.word}**` },
-          { value: detail }
-        ]
-      };
+      return { range: wordRange, contents: [{ value: `**${word.word}**` }, { value: detail }] };
     }
   });
 
-  // Register folding ranges provider (AST when parse succeeds, else brace+keyword)
+  // FoldingRange — LSP first, then local brace-based fallback
   monaco.languages.registerFoldingRangeProvider(SYSMLV2_LANGUAGE_ID, {
-    provideFoldingRanges: (model, context, token) => {
+    provideFoldingRanges: async (model) => {
+      const client = _lspClientGetter?.() ?? null;
+      if (client) {
+        try {
+          const ranges = await client.getFoldingRanges();
+          if (ranges && ranges.length > 0) {
+            return ranges.map(r => ({
+              start: r.startLine + 1,
+              end: (r.endLine ?? r.startLine) + 1,
+              kind: monaco.languages.FoldingRangeKind.Region
+            }));
+          }
+        } catch { /* fall through */ }
+      }
       const text = model.getValue();
       const ranges: monaco.languages.FoldingRange[] = [];
-      try {
-        const parseResult = parseSysML(text);
-        if (parseResult.parserErrors.length === 0 && parseResult.lexerErrors.length === 0 && parseResult.value && isNamespace(parseResult.value)) {
-          function collectFromNs(ns: { children?: Array<{ target?: unknown }> }): void {
-            if (!ns.children) return;
-            for (const child of ns.children) {
-              const t = child.target;
-              if (t && typeof t === 'object' && isNamespace(t)) {
-                const r = getNodeRange(t, text);
-                if (r && r.end.line > r.start.line) {
-                  ranges.push({
-                    startLineNumber: r.start.line + 1,
-                    endLineNumber: r.end.line + 1,
-                    kind: monaco.languages.FoldingRangeKind.Region
-                  });
-                }
-                collectFromNs(t);
-              }
-            }
-          }
-          collectFromNs(parseResult.value);
-        }
-      } catch {
-        // fall through
-      }
-      if (ranges.length > 0) {
-        let commentMatch;
-        const commentRegex = /\/\*[\s\S]*?\*\//g;
-        while ((commentMatch = commentRegex.exec(text)) !== null) {
-          const startPos = model.getPositionAt(commentMatch.index);
-          const endPos = model.getPositionAt(commentMatch.index + commentMatch[0].length);
-          if (startPos.lineNumber < endPos.lineNumber) {
-            ranges.push({
-              startLineNumber: startPos.lineNumber,
-              endLineNumber: endPos.lineNumber,
-              kind: monaco.languages.FoldingRangeKind.Comment
-            });
-          }
-        }
-        return ranges;
-      }
-
-      // Find multi-line block comments
-      let commentMatch;
-      const commentRegex = /\/\*[\s\S]*?\*\//g;
-      while ((commentMatch = commentRegex.exec(text)) !== null) {
-        const startPos = model.getPositionAt(commentMatch.index);
-        const endPos = model.getPositionAt(commentMatch.index + commentMatch[0].length);
-        if (startPos.lineNumber < endPos.lineNumber) {
-          ranges.push({
-            startLineNumber: startPos.lineNumber,
-            endLineNumber: endPos.lineNumber,
-            kind: monaco.languages.FoldingRangeKind.Comment
-          });
-        }
-      }
-
-      // Find brace blocks
       const lines = text.split('\n');
-      const braceStack: { line: number; kind: string }[] = [];
-      
+      const braceStack: number[] = [];
       lines.forEach((line, index) => {
         const lineNum = index + 1;
-        // Count braces to handle inline braces
-        const openBraces = (line.match(/{/g) || []).length;
-        const closeBraces = (line.match(/}/g) || []).length;
-        
-        if (openBraces > 0) {
-          for (let i = 0; i < openBraces; i++) {
-            braceStack.push({ line: lineNum, kind: 'brace' });
-          }
-        }
-        if (closeBraces > 0) {
-          for (let i = 0; i < closeBraces; i++) {
-            const lastBrace = braceStack.pop();
-            if (lastBrace) {
-              ranges.push({
-                startLineNumber: lastBrace.line,
-                endLineNumber: lineNum,
-                kind: monaco.languages.FoldingRangeKind.Region
-              });
+        for (const ch of line) {
+          if (ch === '{') braceStack.push(lineNum);
+          if (ch === '}') {
+            const start = braceStack.pop();
+            if (start && start < lineNum) {
+              ranges.push({ start, end: lineNum, kind: monaco.languages.FoldingRangeKind.Region });
             }
           }
         }
       });
-
-      // Find keyword-based blocks (part def, action, requirement, etc.)
-      const keywordDefs = [
-        { keyword: 'part def', indent: false },
-        { keyword: 'port def', indent: false },
-        { keyword: 'action def', indent: false },
-        { keyword: 'state def', indent: false },
-        { keyword: 'flow def', indent: false },
-        { keyword: 'requirement', indent: false },
-        { keyword: 'constraint', indent: false },
-        { keyword: 'enum', indent: false },
-        { keyword: 'struct', indent: false },
-        { keyword: 'package', indent: false },
-        { keyword: 'behavior', indent: false },
-        { keyword: 'actor', indent: false }
-      ];
-
-      const keywordStack: { line: number; keyword: string }[] = [];
-      
-      lines.forEach((line, index) => {
-        const lineNum = index + 1;
-        const trimmed = line.trim();
-        
-        // Check for definition start
-        for (const def of keywordDefs) {
-          if (trimmed.startsWith(def.keyword) && !trimmed.startsWith('end')) {
-            keywordStack.push({ line: lineNum, keyword: def.keyword });
-            break;
-          }
+      let cm;
+      const cmRegex = /\/\*[\s\S]*?\*\//g;
+      while ((cm = cmRegex.exec(text)) !== null) {
+        const s = model.getPositionAt(cm.index);
+        const e = model.getPositionAt(cm.index + cm[0].length);
+        if (s.lineNumber < e.lineNumber) {
+          ranges.push({ start: s.lineNumber, end: e.lineNumber, kind: monaco.languages.FoldingRangeKind.Comment });
         }
-        
-        // Check for end keyword
-        if (trimmed.startsWith('end') || trimmed.startsWith('}')) {
-          const lastKeyword = keywordStack.pop();
-          if (lastKeyword && lastKeyword.line < lineNum - 1) {
-            ranges.push({
-              startLineNumber: lastKeyword.line,
-              endLineNumber: lineNum,
-              kind: monaco.languages.FoldingRangeKind.Region
-            });
-          }
-        }
-      });
-
+      }
       return ranges;
     }
   });
@@ -526,6 +502,7 @@ export const registerSysmlv2Language = () => {
       const edits: monaco.languages.WorkspaceEdit = {
         edits: occurrences.map(occ => ({
           resource: model.uri,
+          versionId: undefined,
           textEdit: {
             range: {
               startLineNumber: occ.line,
@@ -582,29 +559,63 @@ export const registerSysmlv2Language = () => {
     }
   });
 
-  // Register formatting provider (Document & Range) - AST-aware when parse succeeds
+  // Formatting — LSP first, then local fallback
   monaco.languages.registerDocumentFormattingEditProvider(SYSMLV2_LANGUAGE_ID, {
-    provideDocumentFormattingEdits: (model, options) => {
+    provideDocumentFormattingEdits: async (model, options) => {
+      const client = _lspClientGetter?.() ?? null;
+      if (client) {
+        try {
+          const edits = await client.formatDocument({ tabSize: options.tabSize, insertSpaces: options.insertSpaces });
+          if (edits?.length) {
+            return edits.map(e => ({
+              range: { startLineNumber: e.range.start.line + 1, startColumn: e.range.start.character + 1, endLineNumber: e.range.end.line + 1, endColumn: e.range.end.character + 1 },
+              text: e.newText
+            }));
+          }
+        } catch { /* fall through */ }
+      }
       const text = model.getValue();
       const parseResult = parseSysML(text);
-      const root =
-        parseResult.parserErrors.length === 0 &&
-        parseResult.lexerErrors.length === 0 &&
-        parseResult.value &&
-        isNamespace(parseResult.value)
-          ? parseResult.value
-          : undefined;
-      const formatted = formatSysmlv2Code(text, options, root);
-      return [{
-        range: model.getFullModelRange(),
-        text: formatted
-      }];
+      const root = parseResult.parserErrors.length === 0 && parseResult.lexerErrors.length === 0 && parseResult.value && isNamespace(parseResult.value) ? parseResult.value : undefined;
+      return [{ range: model.getFullModelRange(), text: formatSysmlv2Code(text, options, root) }];
     }
   });
 
-  // Document Symbol Provider (uses parseSymbols - definitions + part/port usages)
+  // DocumentSymbol — LSP first, then local fallback
   monaco.languages.registerDocumentSymbolProvider(SYSMLV2_LANGUAGE_ID, {
-    provideDocumentSymbols: (model, token) => {
+    provideDocumentSymbols: async (model) => {
+      const client = _lspClientGetter?.() ?? null;
+      if (client) {
+        try {
+          const symbols = await client.getDocumentSymbols();
+          if (symbols && symbols.length > 0) {
+            const SYMBOL_KIND_MAP: Record<number, monaco.languages.SymbolKind> = {
+              2: monaco.languages.SymbolKind.Module,    // Package
+              5: monaco.languages.SymbolKind.Class,     // Class
+              11: monaco.languages.SymbolKind.Interface, // Interface
+              13: monaco.languages.SymbolKind.Variable,  // Variable
+              12: monaco.languages.SymbolKind.Function,  // Function
+              10: monaco.languages.SymbolKind.Enum,      // Enum
+              23: monaco.languages.SymbolKind.Struct,     // Struct
+              19: monaco.languages.SymbolKind.Object      // Object
+            };
+            function mapSymbol(s: any): any {
+              return {
+                name: s.name,
+                detail: s.detail ?? '',
+                kind: SYMBOL_KIND_MAP[s.kind] ?? monaco.languages.SymbolKind.Variable,
+                range: { startLineNumber: s.range.start.line + 1, startColumn: s.range.start.character + 1, endLineNumber: s.range.end.line + 1, endColumn: s.range.end.character + 1 },
+                selectionRange: s.selectionRange
+                  ? { startLineNumber: s.selectionRange.start.line + 1, startColumn: s.selectionRange.start.character + 1, endLineNumber: s.selectionRange.end.line + 1, endColumn: s.selectionRange.end.character + 1 }
+                  : { startLineNumber: s.range.start.line + 1, startColumn: s.range.start.character + 1, endLineNumber: s.range.end.line + 1, endColumn: s.range.end.character + 1 },
+                tags: [],
+                children: s.children?.map(mapSymbol) ?? []
+              };
+            }
+            return symbols.map(mapSymbol);
+          }
+        } catch { /* fall through */ }
+      }
       const text = model.getValue();
       if (!text) return [];
       return provideDocumentSymbols(text);
@@ -651,33 +662,84 @@ export const registerSysmlv2Language = () => {
   };
 
   monaco.languages.registerSignatureHelpProvider(SYSMLV2_LANGUAGE_ID, {
-    provideSignatureHelp: (model, position, token, context) => {
+    provideSignatureHelp: async (model, position) => {
+      const client = _lspClientGetter?.() ?? null;
+      if (client) {
+        try {
+          const result = await client.getSignatureHelp({ line: position.lineNumber - 1, character: position.column - 1 });
+          if (result?.signatures?.length) {
+            return {
+              value: {
+                signatures: result.signatures.map(s => ({
+                  label: s.label,
+                  documentation: s.documentation,
+                  parameters: s.parameters?.map(p => ({ label: p.label, documentation: p.documentation })) ?? []
+                })),
+                activeSignature: result.activeSignature,
+                activeParameter: result.activeParameter
+              },
+              dispose: () => {}
+            };
+          }
+        } catch { /* fall through */ }
+      }
       const line = model.getLineContent(position.lineNumber);
       const beforeCursor = line.substring(0, position.column - 1);
       const lastOpen = beforeCursor.lastIndexOf('(');
       if (lastOpen < 0) return null;
-
-      const afterOpen = beforeCursor.substring(lastOpen + 1);
-      const commaCount = (afterOpen.match(/,/g) || []).length;
-      const activeParameter = commaCount;
-
+      const commaCount = (beforeCursor.substring(lastOpen + 1).match(/,/g) || []).length;
       const beforeParen = beforeCursor.substring(0, lastOpen);
       const fnMatch = beforeParen.match(/\b(println|print|assert|toInteger|toReal|size|empty)\s*$/);
       const fnName = fnMatch ? fnMatch[1] : 'println';
       const sig = BUILTIN_SIGNATURES[fnName] ?? BUILTIN_SIGNATURES.println;
-
-      return {
-        signatures: [sig],
-        activeSignature: 0,
-        activeParameter
-      };
+      return { value: { signatures: [sig], activeSignature: 0, activeParameter: commaCount }, dispose: () => {} };
     },
     signatureHelpTriggerCharacters: ['(', ',']
   });
 
-  // Code Action Provider - quick fixes for diagnostics
+  // CodeAction — LSP first, then local fallback
   monaco.languages.registerCodeActionProvider(SYSMLV2_LANGUAGE_ID, {
-    provideCodeActions: (model, range, context, token) => {
+    provideCodeActions: async (model, range, context) => {
+      const client = _lspClientGetter?.() ?? null;
+      if (client) {
+        try {
+          const lspRange = { start: { line: range.startLineNumber - 1, character: range.startColumn - 1 }, end: { line: range.endLineNumber - 1, character: range.endColumn - 1 } };
+          const lspDiags = (context.markers || []).map(m => ({
+            range: { start: { line: m.startLineNumber - 1, character: m.startColumn - 1 }, end: { line: m.endLineNumber - 1, character: m.endColumn - 1 } },
+            message: m.message
+          }));
+          const lspActions = await client.getCodeActions(lspRange, lspDiags);
+          if (lspActions?.length) {
+            const actions: monaco.languages.CodeAction[] = lspActions.map(a => {
+              const action: monaco.languages.CodeAction = {
+                title: a.title,
+                kind: 'quickfix'
+              };
+              if (a.edit?.changes) {
+                const edits: monaco.languages.IWorkspaceTextEdit[] = [];
+                for (const [uri, textEdits] of Object.entries(a.edit.changes)) {
+                  for (const te of textEdits as LspTextEdit[]) {
+                    edits.push({
+                      resource: monaco.Uri.parse(uri),
+                      textEdit: {
+                        range: { startLineNumber: te.range.start.line + 1, startColumn: te.range.start.character + 1, endLineNumber: te.range.end.line + 1, endColumn: te.range.end.character + 1 },
+                        text: te.newText
+                      },
+                      versionId: undefined
+                    });
+                  }
+                }
+                action.edit = { edits };
+              }
+              if (a.command) {
+                action.command = { id: a.command.command ?? a.command.title, title: a.command.title, arguments: a.command.arguments };
+              }
+              return action;
+            });
+            return { actions, dispose: () => {} };
+          }
+        } catch { /* fall through */ }
+      }
       const actions: monaco.languages.CodeAction[] = [];
       const markers = context.markers || [];
 
@@ -690,11 +752,12 @@ export const registerSysmlv2Language = () => {
           const insertCol = lineContent.length + 1;
           actions.push({
             title: 'Insert ;',
-            ...(monaco.languages.CodeActionKind?.QuickFix && { kind: monaco.languages.CodeActionKind.QuickFix }),
+            kind: 'quickfix',
             edit: {
               edits: [{
                 resource: model.uri,
-                edit: { range: new monaco.Range(startLineNumber, insertCol, startLineNumber, insertCol), text: ';' }
+                versionId: undefined,
+                textEdit: { range: new monaco.Range(startLineNumber, insertCol, startLineNumber, insertCol), text: ';' }
               }]
             }
           });
@@ -704,11 +767,12 @@ export const registerSysmlv2Language = () => {
             const [, , correct] = match;
             actions.push({
               title: `Replace with '${correct}'`,
-              ...(monaco.languages.CodeActionKind?.QuickFix && { kind: monaco.languages.CodeActionKind.QuickFix }),
+              kind: 'quickfix',
               edit: {
                 edits: [{
                   resource: model.uri,
-                  edit: { range: new monaco.Range(startLineNumber, startColumn, endLineNumber, endColumn), text: correct! }
+                  versionId: undefined,
+                  textEdit: { range: new monaco.Range(startLineNumber, startColumn, endLineNumber, endColumn), text: correct! }
                 }]
               }
             });
@@ -718,11 +782,12 @@ export const registerSysmlv2Language = () => {
           const insertCol = lineContent.length + 1;
           actions.push({
             title: "Insert ;",
-            ...(monaco.languages.CodeActionKind?.QuickFix && { kind: monaco.languages.CodeActionKind.QuickFix }),
+            kind: 'quickfix',
             edit: {
               edits: [{
                 resource: model.uri,
-                edit: { range: new monaco.Range(startLineNumber, insertCol, startLineNumber, insertCol), text: ';' }
+                versionId: undefined,
+                textEdit: { range: new monaco.Range(startLineNumber, insertCol, startLineNumber, insertCol), text: ';' }
               }]
             }
           });
@@ -732,11 +797,12 @@ export const registerSysmlv2Language = () => {
           if (fixed !== text) {
             actions.push({
               title: 'Remove redundant semicolons',
-              ...(monaco.languages.CodeActionKind?.QuickFix && { kind: monaco.languages.CodeActionKind.QuickFix }),
+              kind: 'quickfix',
               edit: {
                 edits: [{
                   resource: model.uri,
-                  edit: { range: new monaco.Range(startLineNumber, startColumn, endLineNumber, endColumn), text: fixed }
+                  versionId: undefined,
+                  textEdit: { range: new monaco.Range(startLineNumber, startColumn, endLineNumber, endColumn), text: fixed }
                 }]
               }
             });
@@ -751,11 +817,12 @@ export const registerSysmlv2Language = () => {
             const stub = `\npart def ${typeName} {\n\t\n}\n`;
             actions.push({
               title: `Add stub 'part def ${typeName} { }'`,
-              ...(monaco.languages.CodeActionKind?.QuickFix && { kind: monaco.languages.CodeActionKind.QuickFix }),
+              kind: 'quickfix',
               edit: {
                 edits: [{
                   resource: model.uri,
-                  edit: { range: new monaco.Range(insertLine, insertCol, insertLine, insertCol), text: stub }
+                  versionId: undefined,
+                  textEdit: { range: new monaco.Range(insertLine, insertCol, insertLine, insertCol), text: stub }
                 }]
               }
             });
@@ -769,7 +836,7 @@ export const registerSysmlv2Language = () => {
               const first = defLines[0];
               actions.push({
                 title: 'Go to first definition',
-                ...(monaco.languages.CodeActionKind?.QuickFix && { kind: monaco.languages.CodeActionKind.QuickFix }),
+                kind: 'quickfix',
                 command: {
                   id: 'sysml.goToFirstDefinition',
                   title: 'Go to first definition',
@@ -779,7 +846,7 @@ export const registerSysmlv2Language = () => {
             } else {
               actions.push({
                 title: 'Go to first definition (see outline)',
-                ...(monaco.languages.CodeActionKind?.QuickFix && { kind: monaco.languages.CodeActionKind.QuickFix })
+                kind: 'quickfix'
               });
             }
           }
@@ -790,69 +857,220 @@ export const registerSysmlv2Language = () => {
     }
   });
 
-  // TEST: Selection Range Provider
+  // Selection Range — LSP first (AST-aware), local fallback
   monaco.languages.registerSelectionRangeProvider(SYSMLV2_LANGUAGE_ID, {
-    provideSelectionRanges: (model, positions, token) => {
-      if (!positions || positions.length === 0) {
-        return [];
+    provideSelectionRanges: async (model, positions) => {
+      if (!positions || positions.length === 0) return [];
+      const lsp = _lspClientGetter?.();
+      if (lsp) {
+        try {
+          const lspPositions = positions.map(p => ({ line: p.lineNumber - 1, character: p.column - 1 }));
+          const results = await lsp.getSelectionRanges(lspPositions);
+          if (results && results.length > 0) {
+            return results.map(sr => {
+              const flat: monaco.languages.SelectionRange[] = [];
+              let cur: any = sr;
+              while (cur && cur.range) {
+                flat.push({
+                  range: new monaco.Range(cur.range.start.line + 1, cur.range.start.character + 1, cur.range.end.line + 1, cur.range.end.character + 1)
+                });
+                cur = cur.parent;
+              }
+              return flat;
+            });
+          }
+        } catch { /* fall through */ }
       }
-      
       const text = model.getValue();
-      if (!text) {
-        return [];
-      }
-      
+      if (!text) return [];
       const lines = text.split('\n');
-      const position = positions[0];
-      if (!position || position.lineNumber <= 0) {
-        return [];
-      }
-      
-      const lineNum = position.lineNumber;
-      const line = lines[lineNum - 1] || '';
-      
-      const ranges: monaco.languages.SelectionRange[] = [];
-      
-      // Basic word selection
-      const word = model.getWordAtPosition(position);
-      if (word && word.word) {
-        ranges.push({
-          range: {
-            startLineNumber: lineNum,
-            startColumn: word.startColumn,
-            endLineNumber: lineNum,
-            endColumn: word.endColumn
-          }
-        });
-      }
-      
-      // Line selection
-      if (line.length > 0) {
-        ranges.push({
-          range: {
-            startLineNumber: lineNum,
-            startColumn: 1,
-            endLineNumber: lineNum,
-            endColumn: line.length + 1
-          }
-        });
-      }
-      
-      // Full document
-      ranges.push(model.getFullModelRange());
-      
-      return ranges;
+      return positions.map(position => {
+        if (!position || position.lineNumber <= 0) return [];
+        const lineNum = position.lineNumber;
+        const line = lines[lineNum - 1] || '';
+        const ranges: monaco.languages.SelectionRange[] = [];
+        const word = model.getWordAtPosition(position);
+        if (word && word.word) {
+          ranges.push({
+            range: { startLineNumber: lineNum, startColumn: word.startColumn, endLineNumber: lineNum, endColumn: word.endColumn }
+          });
+        }
+        if (line.length > 0) {
+          ranges.push({
+            range: { startLineNumber: lineNum, startColumn: 1, endLineNumber: lineNum, endColumn: line.length + 1 }
+          });
+        }
+        ranges.push({ range: model.getFullModelRange() });
+        return ranges;
+      });
     }
   });
 
-  // Document Range Formatting Provider - formats only the range (brace-depth; AST used for full-doc only)
+  // Document Range Formatting — LSP first, local fallback
   monaco.languages.registerDocumentRangeFormattingEditProvider(SYSMLV2_LANGUAGE_ID, {
-    provideDocumentRangeFormattingEdits: (model, range, options) => {
+    provideDocumentRangeFormattingEdits: async (model, range, options) => {
+      const lsp = _lspClientGetter?.();
+      if (lsp) {
+        try {
+          const edits = await lsp.formatDocumentRange(
+            { start: { line: range.startLineNumber - 1, character: range.startColumn - 1 }, end: { line: range.endLineNumber - 1, character: range.endColumn - 1 } },
+            { tabSize: options.tabSize, insertSpaces: options.insertSpaces }
+          );
+          if (edits.length > 0) {
+            return edits.map(e => ({
+              range: new monaco.Range(e.range.start.line + 1, e.range.start.character + 1, e.range.end.line + 1, e.range.end.character + 1),
+              text: e.newText
+            }));
+          }
+        } catch { /* fall through to local */ }
+      }
       const rangeText = model.getValueInRange(range);
       const formatted = formatSysmlv2Code(rangeText, options);
       return [{ range, text: formatted }];
     }
   });
+
+  // Document Highlight — LSP first, local fallback via findAllOccurrences
+  monaco.languages.registerDocumentHighlightProvider(SYSMLV2_LANGUAGE_ID, {
+    provideDocumentHighlights: async (model, position) => {
+      const lsp = _lspClientGetter?.();
+      if (lsp) {
+        try {
+          const highlights = await lsp.getDocumentHighlights({ line: position.lineNumber - 1, character: position.column - 1 });
+          if (highlights.length > 0) {
+            return highlights.map(h => ({
+              range: new monaco.Range(h.range.start.line + 1, h.range.start.character + 1, h.range.end.line + 1, h.range.end.character + 1),
+              kind: h.kind === 2 ? monaco.languages.DocumentHighlightKind.Write : monaco.languages.DocumentHighlightKind.Read
+            }));
+          }
+        } catch { /* fall through */ }
+      }
+      const text = model.getValue();
+      const word = model.getWordAtPosition(position);
+      if (!word) return [];
+      const symbols = parseSymbols(text);
+      const occurrences = findAllOccurrences(symbols, word.word);
+      return occurrences.map(occ => ({
+        range: new monaco.Range(occ.line, occ.column, occ.endLine, occ.endColumn),
+        kind: monaco.languages.DocumentHighlightKind.Text
+      }));
+    }
+  });
+
+  // Type Definition — LSP first, local fallback
+  monaco.languages.registerTypeDefinitionProvider(SYSMLV2_LANGUAGE_ID, {
+    provideTypeDefinition: async (model, position) => {
+      const lsp = _lspClientGetter?.();
+      if (lsp) {
+        try {
+          const result = await lsp.getTypeDefinition({ line: position.lineNumber - 1, character: position.column - 1 });
+          if (result) {
+            return {
+              uri: monaco.Uri.parse(result.uri),
+              range: new monaco.Range(
+                result.range.start.line + 1, result.range.start.character + 1,
+                result.range.end.line + 1, result.range.end.character + 1
+              )
+            } as monaco.languages.Location;
+          }
+        } catch { /* fall through */ }
+      }
+      return null;
+    }
+  });
+
+  // Code Lens — reference counts via LSP
+  monaco.languages.registerCodeLensProvider(SYSMLV2_LANGUAGE_ID, {
+    provideCodeLenses: async (model) => {
+      const lsp = _lspClientGetter?.();
+      if (!lsp) return { lenses: [], dispose: () => {} };
+      try {
+        const lenses = await lsp.getCodeLens();
+        return {
+          lenses: lenses.map(l => ({
+            range: new monaco.Range(
+              l.range.start.line + 1, l.range.start.character + 1,
+              l.range.end.line + 1, l.range.end.character + 1
+            ),
+            command: l.command ? {
+              id: l.command.command,
+              title: l.command.title,
+              arguments: l.command.arguments
+            } : undefined
+          })),
+          dispose: () => {}
+        };
+      } catch {
+        return { lenses: [], dispose: () => {} };
+      }
+    }
+  });
+
+  // On-Type Formatting — auto-indent on }, ;, newline
+  monaco.languages.registerOnTypeFormattingEditProvider(SYSMLV2_LANGUAGE_ID, {
+    autoFormatTriggerCharacters: ['}', ';', '\n'],
+    provideOnTypeFormattingEdits: async (model, position, ch) => {
+      const lsp = _lspClientGetter?.();
+      if (!lsp) return [];
+      try {
+        const edits = await lsp.getOnTypeFormatting(
+          { line: position.lineNumber - 1, character: position.column - 1 },
+          ch,
+          { tabSize: model.getOptions().tabSize, insertSpaces: model.getOptions().insertSpaces }
+        );
+        return edits.map(e => ({
+          range: new monaco.Range(
+            e.range.start.line + 1, e.range.start.character + 1,
+            e.range.end.line + 1, e.range.end.character + 1
+          ),
+          text: e.newText
+        }));
+      } catch {
+        return [];
+      }
+    }
+  });
+
+  // Linked Editing Range — sync rename across same-file references
+  monaco.languages.registerLinkedEditingRangeProvider(SYSMLV2_LANGUAGE_ID, {
+    provideLinkedEditingRanges: async (model, position) => {
+      const lsp = _lspClientGetter?.();
+      if (!lsp) return undefined;
+      try {
+        const result = await lsp.getLinkedEditingRanges({ line: position.lineNumber - 1, character: position.column - 1 });
+        if (!result || !result.ranges || result.ranges.length === 0) return undefined;
+        return {
+          ranges: result.ranges.map(r => new monaco.Range(r.start.line + 1, r.start.character + 1, r.end.line + 1, r.end.character + 1)),
+          wordPattern: result.wordPattern ? new RegExp(result.wordPattern) : undefined
+        };
+      } catch {
+        return undefined;
+      }
+    }
+  });
+
+  // Workspace Symbol search — exposed as a function for external UI integration
+  (window as any).__sysmlWorkspaceSymbolSearch = async (query: string) => {
+    const lsp = _lspClientGetter?.();
+    if (!lsp) return [];
+    try {
+      const symbols = await lsp.getWorkspaceSymbols(query);
+      return symbols.map(s => ({
+        name: s.name,
+        kind: s.kind,
+        containerName: s.containerName ?? '',
+        uri: s.location.uri,
+        range: {
+          startLine: s.location.range.start.line + 1,
+          startColumn: s.location.range.start.character + 1,
+          endLine: s.location.range.end.line + 1,
+          endColumn: s.location.range.end.character + 1
+        }
+      }));
+    } catch {
+      return [];
+    }
+  };
 
   console.log('SysMLv2 language registered successfully');
 };

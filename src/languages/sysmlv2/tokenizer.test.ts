@@ -24,7 +24,7 @@ describe('SysMLv2 Tokenizer', () => {
 
     it('should have bracket pairs', () => {
       expect(sysmlv2LanguageConfig.brackets).toBeDefined();
-      expect(sysmlv2LanguageConfig.brackets.length).toBeGreaterThan(0);
+      expect(sysmlv2LanguageConfig.brackets!.length).toBeGreaterThan(0);
     });
 
     it('should have indentation rules', () => {

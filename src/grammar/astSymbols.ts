@@ -41,17 +41,18 @@ function addName(symbols: AstSymbols, name: string | undefined, list: 'packages'
 function collectFromNamespace(ns: Namespace, symbols: AstSymbols): void {
   if (!ns?.children) return;
   for (const child of ns.children) {
-    collectFromMembership(child, symbols);
+    if (!isOwningMembership(child)) continue;
+    collectFromMembership(child as OwningMembership, symbols);
   }
 }
 
-function collectFromMembership(m: Membership, symbols: AstSymbols): void {
-  if (!isOwningMembership(m) || !m.target) return;
-  const t = m.target;
+function collectFromMembership(m: OwningMembership, symbols: AstSymbols): void {
+  if (!m.target) return;
+  const t = m.target as Definition | Usage;
   collectFromTarget(t, symbols);
 }
 
-function collectFromTarget(t: Definition | Usage, symbols: AstSymbols): void {
+function collectFromTarget(t: unknown, symbols: AstSymbols): void {
   if (isPackage(t)) {
     addName(symbols, t.declaredName, 'packages');
     collectFromNamespace(t, symbols);

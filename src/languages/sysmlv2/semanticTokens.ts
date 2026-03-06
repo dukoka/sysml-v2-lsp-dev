@@ -246,17 +246,18 @@ export const semanticTokensLegendLsp = {
 
 export const sysmlv2SemanticTokensProvider: monaco.languages.DocumentSemanticTokensProvider = {
   getLegend: () => semanticTokensLegend,
+  releaseDocumentSemanticTokens: () => {},
   provideDocumentSemanticTokens: (model) => {
     const text = model.getValue();
     try {
       const parseResult = parseSysML(text);
       if (parseResult.parserErrors.length === 0 && parseResult.lexerErrors.length === 0 && parseResult.value) {
         const astData = collectTokensFromAst(parseResult.value, text);
-        if (astData.length > 0) return { data: astData };
+        if (astData.length > 0) return { data: new Uint32Array(astData) };
       }
     } catch {
       // fall through
     }
-    return { data: collectTokens(text) };
+    return { data: new Uint32Array(collectTokens(text)) };
   }
 };

@@ -34,6 +34,7 @@ function astSymbolToMonaco(a: AstDocumentSymbol): monaco.languages.DocumentSymbo
     kind: CONTAINER_TO_KIND[a.kind] ?? monaco.languages.SymbolKind.Variable,
     range,
     selectionRange: range,
+    tags: [],
     children: a.children.map(astSymbolToMonaco)
   };
 }
@@ -77,6 +78,7 @@ export function provideDocumentSymbols(text: string): monaco.languages.DocumentS
           endLineNumber: def.endLine,
           endColumn: def.endColumn
         },
+        tags: [],
         children: []
       });
     }

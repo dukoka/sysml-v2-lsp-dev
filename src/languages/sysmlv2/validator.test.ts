@@ -64,7 +64,8 @@ describe('SysMLv2 Validator', () => {
   }
 }`;
       const markers = validator.validate(code);
-      expect(markers).toHaveLength(0);
+      const errorsAndWarnings = markers.filter(m => m.severity >= 4);
+      expect(errorsAndWarnings).toHaveLength(0);
     });
 
     it('should not flag user-defined attributes as undefined', () => {

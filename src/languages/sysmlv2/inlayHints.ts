@@ -8,7 +8,7 @@ const InlayHintKindType = monaco.languages.InlayHintKind?.Type ?? 1;
 export const sysmlv2InlayHintsProvider: monaco.languages.InlayHintsProvider = {
   provideInlayHints: (model, range, token) => {
     try {
-      if (token?.isCancellationRequested) return { hints: [] };
+      if (token?.isCancellationRequested) return { hints: [], dispose: () => {} };
 
       const hints: monaco.languages.InlayHint[] = [];
 
@@ -30,9 +30,9 @@ export const sysmlv2InlayHintsProvider: monaco.languages.InlayHintsProvider = {
         }
       }
 
-      return { hints };
+      return { hints, dispose: () => {} };
     } catch {
-      return { hints: [] };
+      return { hints: [], dispose: () => {} };
     }
   }
 };

@@ -48,38 +48,133 @@ export function isReferenceTo(node: unknown, definition: Element): boolean {
   return false;
 }
 
+/** Extract type name from an ElementReference node (has `parts: Array<Reference<Element>>`) */
+function nameFromElementRef(ref: any): string | undefined {
+  if (!ref?.parts || !Array.isArray(ref.parts) || ref.parts.length === 0) return undefined;
+  const firstPart = ref.parts[0];
+  if (firstPart?.$refText) return firstPart.$refText;
+  const resolved = firstPart?.$ref ?? firstPart?.ref;
+  if (resolved) return resolved.declaredName ?? resolved.declaredShortName;
+  return undefined;
+}
+
 /** 从 Usage 节点获取其类型引用名称（如 part engine : Engine → "Engine"）。 */
 export function getTypeReferenceName(usage: unknown): string | undefined {
-  const u = usage as {
-    typeRelationships?: Array<{ typeRef?: { parts?: Array<{ value?: { declaredName?: string; declaredShortName?: string } }> } }>;
-    type?: { $ref?: { value?: { declaredName?: string; declaredShortName?: string } } };
-    heritage?: Array<{ targetRef?: { $ref?: { value?: { declaredName?: string; declaredShortName?: string } } } }>;
-  };
-  if (u?.type?.$ref?.value) {
-    return u.type.$ref.value.declaredName ?? u.type.$ref.value.declaredShortName;
-  }
-  const firstHeritage = u?.heritage?.[0];
-  if (firstHeritage?.targetRef?.$ref?.value) {
-    return firstHeritage.targetRef.$ref.value.declaredName ?? firstHeritage.targetRef.$ref.value.declaredShortName;
-  }
+  const u = usage as any;
+
+  // Path 1: typeRelationships[0].targetRef (FeatureTyping → Relationship → targetRef: ElementReference)
   const tr = u?.typeRelationships?.[0];
-  const firstPart = tr?.typeRef?.parts?.[0]?.value;
-  return firstPart?.declaredName ?? firstPart?.declaredShortName;
+  if (tr?.targetRef) {
+    const name = nameFromElementRef(tr.targetRef);
+    if (name) return name;
+  }
+
+  // Path 2: heritage[0].targetRef (Subclassification / Specialization → targetRef: ElementReference)
+  const firstHeritage = u?.heritage?.[0];
+  if (firstHeritage?.targetRef) {
+    const name = nameFromElementRef(firstHeritage.targetRef);
+    if (name) return name;
+  }
+
+  // Legacy path: u.type.$ref (some Langium grammars store direct ref)
+  if (u?.type?.$ref) {
+    const val = u.type.$ref;
+    if (val?.declaredName || val?.declaredShortName) return val.declaredName ?? val.declaredShortName;
+  }
+
+  return undefined;
+}
+
+/** Text-based extraction of type name from `: TypeName` in a node's text range */
+export function getTypeNameFromText(text: string, nodeRange: AstRange): string | undefined {
+  const lines = text.split('\n');
+  const startOffset = rangeToOffsetLocal(text, nodeRange.start);
+  const endOffset = rangeToOffsetLocal(text, nodeRange.end);
+  const nodeText = text.substring(startOffset, endOffset);
+  const colonMatch = nodeText.match(/:\s*([A-Z_]\w*)/);
+  if (colonMatch) return colonMatch[1];
+  const specMatch = nodeText.match(/\bspecializes\s+([A-Z_]\w*)/i);
+  if (specMatch) return specMatch[1];
+  const subMatch = nodeText.match(/\b:>\s*([A-Z_]\w*)/);
+  if (subMatch) return subMatch[1];
+  return undefined;
+}
+
+function rangeToOffsetLocal(text: string, pos: { line: number; character: number }): number {
+  let offset = 0;
+  let line = 0;
+  let character = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (line === pos.line && character === pos.character) return i;
+    if (text[i] === '\n') { line++; character = 0; } else character++;
+  }
+  return text.length;
 }
 
 /** 获取 Usage 节点中“类型引用”在文档中的 range（用于判断光标是否在类型名上）。 */
 export function getTypeReferenceRange(usage: unknown, text: string): AstRange | undefined {
-  const u = usage as {
-    type?: unknown;
-    heritage?: Array<{ targetRef?: unknown }>;
-  };
+  const u = usage as any;
+
+  // Path 1: typeRelationships[0].targetRef (FeatureTyping)
+  const tr = u?.typeRelationships?.[0];
+  if (tr?.targetRef) {
+    const r = getNodeRange(tr.targetRef, text);
+    if (r) return r;
+    if (tr.targetRef.parts?.[0]) {
+      const partRange = getNodeRange(tr.targetRef.parts[0], text);
+      if (partRange) return partRange;
+    }
+  }
+
+  // Path 2: heritage[0].targetRef (Subclassification/Specialization)
+  const firstHeritage = u?.heritage?.[0];
+  if (firstHeritage?.targetRef) {
+    const r = getNodeRange(firstHeritage.targetRef, text);
+    if (r) return r;
+    if (firstHeritage.targetRef?.parts?.[0]) {
+      const partRange = getNodeRange(firstHeritage.targetRef.parts[0], text);
+      if (partRange) return partRange;
+    }
+  }
+
+  // Legacy: direct type property
   if (u?.type) {
     const r = getNodeRange(u.type, text);
     if (r) return r;
   }
-  const firstHeritage = u?.heritage?.[0];
-  if (firstHeritage?.targetRef) return getNodeRange(firstHeritage.targetRef, text) ?? undefined;
+
+  // Text-based fallback: find `: TypeName` in the node text
+  const nodeRange = getNodeRange(usage, text);
+  if (nodeRange) {
+    const typeName = getTypeNameFromText(text, nodeRange);
+    if (typeName) {
+      const startOff = rangeToOffsetLocal(text, nodeRange.start);
+      const endOff = rangeToOffsetLocal(text, nodeRange.end);
+      const nodeText = text.substring(startOff, endOff);
+      const colonIdx = nodeText.indexOf(':');
+      if (colonIdx >= 0) {
+        const afterColon = nodeText.substring(colonIdx + 1);
+        const typeNameIdx = afterColon.indexOf(typeName);
+        if (typeNameIdx >= 0) {
+          const absStart = startOff + colonIdx + 1 + typeNameIdx;
+          const absEnd = absStart + typeName.length;
+          const startPos = offsetToLineCharRef(text, absStart);
+          const endPos = offsetToLineCharRef(text, absEnd);
+          return { start: startPos, end: endPos };
+        }
+      }
+    }
+  }
+
   return undefined;
+}
+
+function offsetToLineCharRef(text: string, offset: number): { line: number; character: number } {
+  let line = 0, character = 0;
+  for (let i = 0; i < offset && i < text.length; i++) {
+    if (text[i] === '\n') { line++; character = 0; } else character++;
+  }
+  return { line, character };
 }
 
 /**

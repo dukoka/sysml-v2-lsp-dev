@@ -109,9 +109,9 @@ export const sysmlv2Language: monaco.languages.IMonarchLanguage = {
 
   // Bracket matching
   brackets: [
-    ['{', '}', 'delimiter.curly'],
-    ['[', ']', 'delimiter.square'],
-    ['(', ')', 'delimiter.parenthesis']
+    { open: '{', close: '}', token: 'delimiter.curly' },
+    { open: '[', close: ']', token: 'delimiter.square' },
+    { open: '(', close: ')', token: 'delimiter.parenthesis' }
   ],
 
   // Auto-closing pairs
@@ -144,8 +144,6 @@ export const sysmlv2LanguageConfig: monaco.languages.LanguageConfiguration = {
     ['[', ']'],
     ['(', ')']
   ],
-  autoClosingBeforeNewLine: 'none',
-  autoClosingQuotes: 'always',
   surroundingPairs: [
     { open: '{', close: '}' },
     { open: '[', close: ']' },
