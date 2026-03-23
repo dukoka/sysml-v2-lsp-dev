@@ -117,6 +117,22 @@ class SysmlLSPClient {
     });
   }
 
+  async getDebugIndexTypes(): Promise<{ count: number; uris: string[]; names: string[] }> {
+    try {
+      return await this.sendRequest('sysml/debugIndexTypes', {});
+    } catch (e) {
+      console.error('Failed to get debug index types:', e);
+      return { count: 0, uris: [], names: [] };
+    }
+  }
+
+  /** Load a library file with an arbitrary URI (not tracked in openDocuments). */
+  loadLibraryFile(uri: string, content: string): void {
+    this.sendNotification('textDocument/didOpen', {
+      textDocument: { uri, languageId: 'sysmlv2', version: 1, text: content }
+    });
+  }
+
   async closeDocument(): Promise<void> {
     if (!this.openDocuments.has(this.documentUri)) return;
 

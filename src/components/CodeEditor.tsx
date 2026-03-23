@@ -3,6 +3,7 @@ import * as monaco from 'monaco-editor';
 import { registerSysmlv2Language, registerSysmlv2Theme, setSysmlv2LspClientGetter, SYSMLV2_LANGUAGE_ID } from '../languages/sysmlv2';
 import { createSysmlv2Validator } from '../languages/sysmlv2/validator';
 import { createSysmlLSPClient } from '../workers/lspClient';
+import { loadStandardLibrary } from '../workers/stdlibLoader';
 import { isG4ValidationEnabled } from '../grammar/config';
 import type { DiagnosticItem, CursorPosition } from '../store/fileStore';
 
@@ -262,6 +263,18 @@ const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEd
         await client.initialize();
         useLspRef.current = true;
         onLspReadyRef.current?.(true);
+        // Load standard library in background (non-blocking)
+        loadStandardLibrary(client).then(async ({ loaded, failed }) => {
+          if (failed > 0) console.warn(`SysMLv2 stdlib: ${loaded} loaded, ${failed} failed`);
+          else console.log(`SysMLv2 stdlib: ${loaded} files loaded`);
+          const debug = await client.getDebugIndexTypes();
+          console.log(`[debug] index: ${debug.count} type names across ${debug.uris.length} files`);
+          console.log('[debug] sample types:', debug.names.slice(0, 20));
+          if (!debug.names.includes('ScalarValue') && !debug.names.includes('Part')) {
+            console.warn('[debug] stdlib types NOT found in index — regex extraction may have failed');
+            console.log('[debug] all indexed URIs:', debug.uris);
+          }
+        });
       } catch (e) {
         console.warn('LSP not available:', e);
         onLspReadyRef.current?.(false);

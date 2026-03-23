@@ -111,7 +111,16 @@ function detectCompletionContext(model: monaco.editor.ITextModel, position: mona
   if (beforeCursor.endsWith(':') && !beforeCursor.endsWith('::')) {
     return { type: 'type', currentWord, braceDepth };
   }
-  
+
+  // Handle partial word after trigger: "attribute x : Sc" → strip "Sc" → detect ":"
+  const stripped = beforeCursor.replace(/\w+$/, '');
+  if (stripped !== beforeCursor) {
+    const strEnd = stripped.trimEnd();
+    for (const token of RELATIONSHIP_TOKENS) {
+      if (strEnd.endsWith(token)) return { type: 'type', currentWord, braceDepth };
+    }
+  }
+
   // After 'import ' - package names
   if (/\bimport\s*$/i.test(trimmed)) {
     return { type: 'importName', currentWord, braceDepth };

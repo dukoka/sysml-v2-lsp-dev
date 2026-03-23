@@ -298,6 +298,42 @@ connection.onInitialize((): InitializeResult => ({
 }));
 
 /** 从 Index 构建 scopeLookupInIndex 所需的 Map<uri, IndexEntryForLookup> */
+const TYPEDEF_RE = /\b(?:abstract\s+)?(?:part|port|action|state|item|connection|attribute|datatype|struct|classifier|enum\s+def|requirement|constraint|calc|occurrence|metadata)\s+def\s+(\w+)/g;
+const KERML_TYPE_RE = /\b(?:abstract\s+)?(?:datatype|classifier|struct|class|metaclass)\s+(\w+)(?:\s+specializes|\s+\{|;)/g;
+
+function extractNamesFromText(text: string, names: Set<string>): void {
+  for (const re of [TYPEDEF_RE, KERML_TYPE_RE]) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      if (m[1]) names.add(m[1]);
+    }
+  }
+}
+
+/** Collect type names from all indexed files (AST for user files, regex for stdlib). */
+function getIndexTypeNames(): string[] {
+  const names = new Set<string>();
+  for (const [, entry] of getIndex()) {
+    if (entry.text) extractNamesFromText(entry.text, names);
+    if (!entry.root) continue;
+    function visit(ns: any): void {
+      if (!ns?.children) return;
+      for (const child of ns.children) {
+        if (!isOwningMembership(child) || !child.target) continue;
+        const t = child.target;
+        if (isDefinition(t)) {
+          const name = (t as { declaredName?: string }).declaredName;
+          if (name) names.add(name);
+        }
+        if (isNamespace(t)) visit(t);
+      }
+    }
+    visit(entry.root);
+  }
+  return Array.from(names);
+}
+
 function indexForLookup(): Map<string, IndexEntryForLookup> {
   const map = new Map<string, IndexEntryForLookup>();
   for (const [uri, entry] of getIndex()) {
@@ -336,6 +372,12 @@ function astSymbolToLsp(a: AstDocumentSymbol): DocumentSymbol {
   };
 }
 
+
+connection.onRequest('sysml/debugIndexTypes', (): { count: number; uris: string[]; names: string[] } => {
+  const names = getIndexTypeNames();
+  const uris = Array.from(getIndex().keys());
+  return { count: names.length, uris, names };
+});
 
 connection.onRequest('sysml/g4Diagnostics', (params: { textDocument: { uri: string } }): Diagnostic[] => {
   const doc = documents.get(params.textDocument.uri);
@@ -458,6 +500,16 @@ function detectCompletionContextLsp(line: string, char: number): string {
     if (beforeCursor.endsWith(token) || trimmed.endsWith(token)) return 'type';
   }
   if (beforeCursor.endsWith(':') && !beforeCursor.endsWith('::')) return 'type';
+
+  // Handle partial word after trigger: "attribute x : Sc" → strip "Sc" → "attribute x : " → detect ":"
+  const stripped = beforeCursor.replace(/\w+$/, '');
+  if (stripped !== beforeCursor) {
+    const strEnd = stripped.trimEnd();
+    for (const token of RELATIONSHIP_TOKENS_LSP) {
+      if (strEnd.endsWith(token)) return 'type';
+    }
+  }
+
   if (/\bimport\s*$/i.test(trimmed)) return 'importName';
   if (/\battribute\s*$/i.test(trimmed)) return 'attrName';
   if (/^(enum)\s*$/i.test(trimmed)) return 'enumName';
@@ -497,9 +549,18 @@ connection.onCompletion((params) => {
 
   let items: CompletionItem[] = [];
 
+  const indexTypes = getIndexTypeNames();
+  const mergeTypes = (base: string[]): string[] => {
+    const seen = new Set(base);
+    const merged = [...base];
+    for (const n of indexTypes) { if (!seen.has(n)) { seen.add(n); merged.push(n); } }
+    return merged;
+  };
+
   switch (ctx) {
     case 'type': {
-      const typeNames = astSymbols?.typeNames?.length ? astSymbols.typeNames : STATIC_TYPES;
+      const base = astSymbols?.typeNames?.length ? astSymbols.typeNames : STATIC_TYPES;
+      const typeNames = mergeTypes(base);
       items = typeNames.map(t => ({ label: t, kind: CompletionItemKind.Class, detail: 'type' }));
       break;
     }
@@ -553,7 +614,7 @@ connection.onCompletion((params) => {
       const bodyKw = [...STRUCTURAL_KEYWORDS_LSP, 'end', 'attribute', 'feature', 'reference', 'owned', 'exhibits', 'comment', 'enum', 'struct'];
       items = [
         ...bodyKw.map(kw => ({ label: kw, kind: CompletionItemKind.Keyword, detail: 'keyword' })),
-        ...(astSymbols?.typeNames?.length ? astSymbols.typeNames : STATIC_TYPES).map(t => ({ label: t, kind: CompletionItemKind.Class, detail: 'type' }))
+        ...mergeTypes(astSymbols?.typeNames?.length ? astSymbols.typeNames : STATIC_TYPES).map(t => ({ label: t, kind: CompletionItemKind.Class, detail: 'type' }))
       ];
       if (astSymbols) {
         const members = [...astSymbols.partDefs, ...astSymbols.portDefs, ...astSymbols.attributeNames];
@@ -565,7 +626,7 @@ connection.onCompletion((params) => {
     default: {
       items = [
         ...COMPLETION_KEYWORDS.map(k => ({ label: k, kind: CompletionItemKind.Keyword, detail: 'keyword' })),
-        ...(astSymbols?.typeNames?.length ? astSymbols.typeNames : STATIC_TYPES).map(t => ({ label: t, kind: CompletionItemKind.Class, detail: 'type' })),
+        ...mergeTypes(astSymbols?.typeNames?.length ? astSymbols.typeNames : STATIC_TYPES).map(t => ({ label: t, kind: CompletionItemKind.Class, detail: 'type' })),
         { label: 'part def', kind: CompletionItemKind.Snippet, detail: 'Part definition', insertText: 'part def ${1:Name} {\n\t$0\n}', insertTextFormat: InsertTextFormat.Snippet },
         { label: 'port def', kind: CompletionItemKind.Snippet, detail: 'Port definition', insertText: 'port def ${1:Name} {\n\t$0\n}', insertTextFormat: InsertTextFormat.Snippet },
         { label: 'action def', kind: CompletionItemKind.Snippet, detail: 'Action definition', insertText: 'action def ${1:Name} {\n\t$0\n}', insertTextFormat: InsertTextFormat.Snippet },
