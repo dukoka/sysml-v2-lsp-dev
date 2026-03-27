@@ -1,0 +1,41 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-03-23T00:54:46.209Z",
+  "phase": "stdlib-completion",
+  "phase_name": "标准库类型补全修复",
+  "phase_dir": "adhoc",
+  "plan": 1,
+  "task": 2,
+  "total_tasks": 3,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": 1, "name": "修复 detectCompletionContextLsp 部分词 type 上下文检测", "status": "done", "commit": "5fe560e"},
+    {"id": 2, "name": "添加 sysml/debugIndexTypes 调试端点 + 测试", "status": "done", "commit": "5fe560e"}
+  ],
+  "remaining_tasks": [
+    {"id": 3, "name": "浏览器实测验证：stdlib 类型是否出现在补全列表", "status": "not_started"}
+  ],
+  "blockers": [],
+  "human_actions_pending": [
+    {
+      "action": "运行 npm run dev，打开浏览器，输入 'attribute test : Sc'，观察补全是否出现 ScalarValue/String 等标准库类型",
+      "context": "需要浏览器环境验证 getIndexTypeNames() regex 提取是否生效，看控制台 [debug] 日志",
+      "blocking": false
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "context detection 修复：剥离末尾词后重检 relationship token",
+      "rationale": "endsWith(':') 只在光标紧贴触发符时生效，输入部分词后失效",
+      "phase": "stdlib-completion"
+    },
+    {
+      "decision": "调试端点而非断点",
+      "rationale": "worker 运行在 Web Worker 内，不易断点，用 sysml/debugIndexTypes 请求直接返回 getIndexTypeNames() 结果更可靠",
+      "phase": "stdlib-completion"
+    }
+  ],
+  "uncommitted_files": [],
+  "next_action": "npm run dev，观察控制台 '[debug] index: N type names' 日志；若 ScalarValue 不在列表则说明是时序问题（stdlib 未加载完即触发补全），需在 loadStandardLibrary 完成后才触发测试",
+  "context_notes": "两个可能根因：(A) context detection bug（已修复）；(B) getIndexTypeNames() regex 未提取到 stdlib 类型（已加调试日志，regex 逻辑分析应正确，最可能是时序问题）。108 个单元测试全通过，regex 逻辑已验证。"
+}

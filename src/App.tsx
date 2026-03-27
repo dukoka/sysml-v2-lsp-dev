@@ -69,7 +69,7 @@ function App() {
   const state = useFileStore();
   const editorRef = useRef<CodeEditorHandle>(null);
 
-  const [theme, setTheme] = useState('vs-dark');
+  const [theme, setTheme] = useState('sysmlv2-dark');
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [problemsExpanded, setProblemsExpanded] = useState(false);
   const [outlineSymbols, setOutlineSymbols] = useState<OutlineSymbol[]>([]);

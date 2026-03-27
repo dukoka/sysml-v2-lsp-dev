@@ -131,6 +131,8 @@ class SysmlLSPClient {
     this.sendNotification('textDocument/didOpen', {
       textDocument: { uri, languageId: 'sysmlv2', version: 1, text: content }
     });
+    // Also notify custom method to ensure immediate indexing (bypass TextDocuments timing)
+    this.sendNotification('sysml/indexLibraryFile', { uri, content });
   }
 
   async closeDocument(): Promise<void> {
@@ -173,6 +175,7 @@ class SysmlLSPClient {
         textDocument: { uri: this.documentUri },
         position
       });
+      if (Array.isArray(result)) return result;
       return result?.items || [];
     } catch (e) {
       console.error('Failed to get completion:', e);

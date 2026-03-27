@@ -268,6 +268,11 @@ const reader = new BrowserMessageReader(self as any);
 const writer = new BrowserMessageWriter(self as any);
 const connection = createConnection(ProposedFeatures.all, reader, writer);
 
+// Direct library file indexing (for stdlib loading without TextDocuments overhead)
+connection.onNotification('sysml/indexLibraryFile', (params: { uri: string; content: string }) => {
+  updateIndex(params.uri, params.content);
+});
+
 connection.onInitialize((): InitializeResult => ({
   capabilities: {
     textDocumentSync: TextDocumentSyncKind.Full,
@@ -539,6 +544,18 @@ connection.onCompletion((params) => {
   const line = lines[params.position.line] ?? '';
   const ctx = detectCompletionContextLsp(line, params.position.character);
 
+  // Extract the word prefix being typed for filtering and range replacement
+  const beforeCursor = line.substring(0, params.position.character);
+  const prefixMatch = beforeCursor.match(/[a-zA-Z_]\w*$/);
+  const prefix = prefixMatch ? prefixMatch[0].toLowerCase() : '';
+  const prefixLen = prefixMatch ? prefixMatch[0].length : 0;
+
+  // The range that will be replaced when a completion item is accepted
+  const replaceRange = {
+    start: { line: params.position.line, character: params.position.character - prefixLen },
+    end: { line: params.position.line, character: params.position.character }
+  };
+
   let astSymbols: ReturnType<typeof extractAstSymbols> | null = null;
   try {
     const parseResult = parseSysML(text);
@@ -555,6 +572,26 @@ connection.onCompletion((params) => {
     const merged = [...base];
     for (const n of indexTypes) { if (!seen.has(n)) { seen.add(n); merged.push(n); } }
     return merged;
+  };
+
+  // Filter items based on prefix match (use filterText when available, else first word of label)
+  const filterItems = (items: CompletionItem[]): CompletionItem[] => {
+    if (!prefix) return items;
+    return items.filter(item => {
+      const filterKey = item.filterText
+        ?? (typeof item.label === 'string' ? item.label : item.label.label);
+      // match against the first word of the filter key (handles multi-word labels)
+      const firstWord = filterKey.split(/\s+/)[0].toLowerCase();
+      return firstWord.startsWith(prefix) || filterKey.toLowerCase().startsWith(prefix);
+    });
+  };
+
+  // Attach a textEdit to each item so Monaco replaces exactly the typed prefix,
+  // preventing cursor-jump caused by Monaco's own word-boundary guessing.
+  const withTextEdit = (item: CompletionItem): CompletionItem => {
+    if (item.textEdit) return item;  // already set, leave as-is
+    const newText = item.insertText ?? (typeof item.label === 'string' ? item.label : item.label.label);
+    return { ...item, textEdit: { range: replaceRange, newText } };
   };
 
   switch (ctx) {
@@ -606,7 +643,7 @@ connection.onCompletion((params) => {
     }
     case 'definitionStart': {
       items = [
-        { label: 'def', kind: CompletionItemKind.Keyword, detail: 'definition', insertText: 'def ' }
+        { label: 'def', kind: CompletionItemKind.Keyword, detail: 'definition' }
       ];
       break;
     }
@@ -627,18 +664,18 @@ connection.onCompletion((params) => {
       items = [
         ...COMPLETION_KEYWORDS.map(k => ({ label: k, kind: CompletionItemKind.Keyword, detail: 'keyword' })),
         ...mergeTypes(astSymbols?.typeNames?.length ? astSymbols.typeNames : STATIC_TYPES).map(t => ({ label: t, kind: CompletionItemKind.Class, detail: 'type' })),
-        { label: 'part def', kind: CompletionItemKind.Snippet, detail: 'Part definition', insertText: 'part def ${1:Name} {\n\t$0\n}', insertTextFormat: InsertTextFormat.Snippet },
-        { label: 'port def', kind: CompletionItemKind.Snippet, detail: 'Port definition', insertText: 'port def ${1:Name} {\n\t$0\n}', insertTextFormat: InsertTextFormat.Snippet },
-        { label: 'action def', kind: CompletionItemKind.Snippet, detail: 'Action definition', insertText: 'action def ${1:Name} {\n\t$0\n}', insertTextFormat: InsertTextFormat.Snippet },
-        { label: 'requirement', kind: CompletionItemKind.Snippet, detail: 'Requirement', insertText: 'requirement ${1:Name} {\n\tdoc /* $2 */\n\tsubject $0;\n}', insertTextFormat: InsertTextFormat.Snippet },
-        { label: 'package', kind: CompletionItemKind.Snippet, detail: 'Package', insertText: 'package ${1:Name} {\n\t$0\n}', insertTextFormat: InsertTextFormat.Snippet },
-        { label: 'enum', kind: CompletionItemKind.Snippet, detail: 'Enumeration', insertText: 'enum ${1:Name} {\n\t${2:value1};\n\t${3:value2};\n}', insertTextFormat: InsertTextFormat.Snippet },
-        { label: 'attribute', kind: CompletionItemKind.Snippet, detail: 'Attribute', insertText: '${1:name} : ${2:Type};', insertTextFormat: InsertTextFormat.Snippet }
+        { label: 'part def', filterText: 'part', kind: CompletionItemKind.Snippet, detail: 'Part definition', insertText: 'part def ${1:Name} {\n\t$0\n}', insertTextFormat: InsertTextFormat.Snippet },
+        { label: 'port def', filterText: 'port', kind: CompletionItemKind.Snippet, detail: 'Port definition', insertText: 'port def ${1:Name} {\n\t$0\n}', insertTextFormat: InsertTextFormat.Snippet },
+        { label: 'action def', filterText: 'action', kind: CompletionItemKind.Snippet, detail: 'Action definition', insertText: 'action def ${1:Name} {\n\t$0\n}', insertTextFormat: InsertTextFormat.Snippet },
+        { label: 'requirement', filterText: 'requirement', kind: CompletionItemKind.Snippet, detail: 'Requirement', insertText: 'requirement ${1:Name} {\n\tdoc /* $2 */\n\tsubject $0;\n}', insertTextFormat: InsertTextFormat.Snippet },
+        { label: 'package', filterText: 'package', kind: CompletionItemKind.Snippet, detail: 'Package', insertText: 'package ${1:Name} {\n\t$0\n}', insertTextFormat: InsertTextFormat.Snippet },
+        { label: 'enum', filterText: 'enum', kind: CompletionItemKind.Snippet, detail: 'Enumeration', insertText: 'enum ${1:Name} {\n\t${2:value1};\n\t${3:value2};\n}', insertTextFormat: InsertTextFormat.Snippet },
+        { label: 'attribute', filterText: 'attribute', kind: CompletionItemKind.Snippet, detail: 'Attribute', insertText: '${1:name} : ${2:Type};', insertTextFormat: InsertTextFormat.Snippet }
       ];
       break;
     }
   }
-  return items;
+  return filterItems(items).map(withTextEdit);
 });
 
 connection.onHover((params) => {
