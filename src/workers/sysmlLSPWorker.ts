@@ -509,7 +509,7 @@ connection.onRequest('textDocument/formatting', (params: { textDocument: { uri: 
   const formatted = formatSysmlv2Code(text, {
     tabSize: params.options?.tabSize ?? 2,
     insertSpaces: params.options?.insertSpaces ?? true
-  }, root);
+  });
   const lines = text.split('\n');
   const endLine = lines.length - 1;
   const endChar = lines[endLine]?.length ?? 0;
