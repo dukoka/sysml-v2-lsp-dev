@@ -91,17 +91,29 @@ export function formatSysmlv2Code(
     const braceIndents: number[] = [];
     let braceDepth = 0;
     for (let i = 0; i < normalizedLines.length; i++) {
-      const trimmed = normalizedLines[i].trim();
+      const line = normalizedLines[i];
+      const trimmed = line.trim();
       if (trimmed === '') {
         braceIndents.push(-1);
         continue;
       }
-      const openBraces = (trimmed.match(/{/g) || []).length;
+      // 处理行内 brace，计算该行之前的深度
+      let depth = braceDepth;
+      // 检查行首是否有 }，如果有则先减少深度
       if (trimmed.startsWith('}') || trimmed.startsWith('end')) {
-        braceDepth = Math.max(0, braceDepth - 1);
+        depth = Math.max(0, depth - 1);
       }
-      braceIndents.push(braceDepth);
+      // 统计行内的 { 和 } 数量来更新深度
+      const openBraces = (trimmed.match(/{/g) || []).length;
+      const closeBraces = (trimmed.match(/}/g) || []).length;
+      // 行内只有 closing brace 时，深度不增加
+      if (closeBraces > 0 && openBraces === 0) {
+        depth = Math.max(0, depth - closeBraces);
+      }
+      braceIndents.push(depth);
+      // 更新下一行的基础深度（只在行有 opening brace 时增加）
       if (openBraces > 0) braceDepth += openBraces;
+      if (closeBraces > 0 && openBraces === 0) braceDepth = Math.max(0, braceDepth - closeBraces);
     }
     baseIndents = braceIndents.map(d => (d < 0 ? null : d));
   }
