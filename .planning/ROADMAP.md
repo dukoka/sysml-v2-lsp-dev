@@ -8,7 +8,7 @@
 
 ## Phases
 
-- [ ] **Phase A: 语法校验标记修复** — 修复语法诊断标记位置不准确 (DIAG-MARK-01)
+- [x] **Phase A: 语法校验标记修复** — 修复语法诊断标记位置不准确 (DIAG-MARK-01)
 - [ ] **Phase B: 代码格式化改进** — 改进 Format Document/Selection/Range 功能 (FMT-IMP-01)
 
 ---
@@ -22,7 +22,7 @@
 1. 解析错误标记显示在正确的行和列
 2. 语义验证错误标记位置准确
 **Plans**: 1 plan
-- [ ] A1-语法标记修复-PLAN.md — 修复语法诊断标记位置
+- [x] A-01-PLAN.md — 修复语法诊断标记位置
 
 ### Phase B: 代码格式化改进
 **Goal**: 改进代码格式化功能

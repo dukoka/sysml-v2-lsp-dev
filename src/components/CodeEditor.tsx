@@ -336,6 +336,10 @@ const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEd
             return;
           }
 
+          for (const uri of modelsRef.current.keys()) {
+            scheduleDiagnostics(uri);
+          }
+
           setTimeout(() => setLoadingProgress(null), READY_DELAY_MS);
         } catch (e) {
           console.warn('LSP not available:', e);
