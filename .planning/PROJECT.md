@@ -7,7 +7,7 @@
 
 提供 SysMLv2 建模语言的完�?IDE 体验（补全、诊断、导航、重构），全部在浏览器内运行，零服务器依赖�?
 
-## Current Milestone: v1.3 下一阶段工作初始化。**Status: ACTIVE**
+## Current Milestone: LSP 语法校验标记与代码格式化问题。**Status: ACTIVE**
 
 ## Requirements
 
@@ -38,6 +38,9 @@
 - �?Project documentation with rspress (completed in v1.1) �?DOC-ARCH-*, DOC-MOD-*, DOC-FLOW-*, DOC-FN-*, DOC-HIER-*
 
 ### Active (this session)
+
+- **语法校验标记修复** — 修复语法诊断标记位置不准确 (DIAG-MARK-01)
+- **代码格式化改进** — 改进 Format Document/Selection/Range 功能 (FMT-IMP-01)
 
 
 ## Evolution

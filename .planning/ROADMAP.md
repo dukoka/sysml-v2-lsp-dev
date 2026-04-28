@@ -1,20 +1,38 @@
-# Roadmap — SysMLv2 Editor Closure Session
+# Roadmap — SysMLv2 Editor
 
-**Granularity:** coarse (5 phases)
+**Granularity:** coarse (2 phases)
 **Mode:** yolo
-**Total v1 Requirements:** 15
+**Total Requirements:** 2
 
 ---
 
 ## Phases
 
-- [x] **Milestone v1.0: Closure Session** — Completed all phases: stdlib-completion, test-coverage, cleanup
-  See [milestone details](milestones/v1.0-ROADMAP.md)
-- [x] **Phase 4: architecture-documentation** — Document overall code architecture including React + Monaco Editor + Web Worker LSP structure
-- [x] **Phase 5: module-documentation** — Document src/ directory structure, LSP Worker, Monaco Editor integration, and virtual file store
-- [x] **Phase 6: execution-flow-documentation** — Map code execution flows from user input to syntax highlighting, completion, diagnostics, and navigation
-- [x] **Phase 7: function-level-documentation** — Document key functions in lspClient.ts, sysmlLSPWorker.ts, editor components, and virtual file store utilities
-- [x] **Phase 8: hierarchical-organization** — Create hierarchical documentation structure with proper navigation, table of contents, and sidebar for rspress
+- [ ] **Phase A: 语法校验标记修复** — 修复语法诊断标记位置不准确 (DIAG-MARK-01)
+- [ ] **Phase B: 代码格式化改进** — 改进 Format Document/Selection/Range 功能 (FMT-IMP-01)
+
+---
+
+## Phase Details
+
+### Phase A: 语法校验标记修复
+**Goal**: 修复语法诊断标记位置不准确
+**Requirements**: DIAG-MARK-01
+**Success Criteria**:
+1. 解析错误标记显示在正确的行和列
+2. 语义验证错误标记位置准确
+**Plans**: 1 plan
+- [ ] A1-语法标记修复-PLAN.md — 修复语法诊断标记位置
+
+### Phase B: 代码格式化改进
+**Goal**: 改进代码格式化功能
+**Requirements**: FMT-IMP-01
+**Success Criteria**:
+1. Format Document 不会添加额外缩进
+2. Format Selection 保持正常
+3. Format Range 功能正常
+**Plans**: 1 plan
+- [ ] B1-格式化改进-PLAN.md — 改进代码格式化功能
 
 ---
 
