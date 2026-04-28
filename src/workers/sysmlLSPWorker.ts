@@ -509,11 +509,8 @@ connection.onRequest('textDocument/formatting', (params: { textDocument: { uri: 
   const formatted = formatSysmlv2Code(text, {
     tabSize: params.options?.tabSize ?? 2,
     insertSpaces: params.options?.insertSpaces ?? true
-  });
-  const lines = text.split('\n');
-  const endLine = lines.length - 1;
-  const endChar = lines[endLine]?.length ?? 0;
-  return [{ range: { start: { line: 0, character: 0 }, end: { line: endLine, character: endChar } }, newText: formatted }];
+  }, root);
+  return [{ range: { start: { line: 0, character: 0 }, end: doc.positionAt(text.length) }, newText: formatted }];
 });
 
 connection.onRequest('textDocument/rangeFormatting', (params: { textDocument: { uri: string }; range: { start: { line: number; character: number }; end: { line: number; character: number } }; options?: { tabSize?: number; insertSpaces?: boolean } }): TextEdit[] => {
