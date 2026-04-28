@@ -7,6 +7,7 @@ import { getAstIndentLevels } from '../../grammar/astUtils.js';
 export interface FormattingOptions {
   tabSize?: number;
   insertSpaces?: boolean;
+  baseIndent?: number;
 }
 
 /** Optional AST root (Namespace) for AST-aware formatting; when set, indent matches document symbols/folding. */
@@ -88,6 +89,7 @@ export function formatSysmlv2Code(
   if (root != null) {
     baseIndents = getAstIndentLevels(root, text);
   } else {
+    // 基于原始缩进的格式化 - 保留并规范化原始缩进
     const braceIndents: number[] = [];
     let braceDepth = 0;
     for (let i = 0; i < normalizedLines.length; i++) {
@@ -97,23 +99,16 @@ export function formatSysmlv2Code(
         braceIndents.push(-1);
         continue;
       }
-      // 处理行内 brace，计算该行之前的深度
-      let depth = braceDepth;
-      // 检查行首是否有 }，如果有则先减少深度
+      // 先处理 closing brace（在当前行扣减深度）
       if (trimmed.startsWith('}') || trimmed.startsWith('end')) {
-        depth = Math.max(0, depth - 1);
+        braceDepth = Math.max(0, braceDepth - 1);
       }
-      // 统计行内的 { 和 } 数量来更新深度
+      braceIndents.push(braceDepth);
+      // 再处理 opening brace（从下一行开始增加深度）
       const openBraces = (trimmed.match(/{/g) || []).length;
       const closeBraces = (trimmed.match(/}/g) || []).length;
-      // 行内只有 closing brace 时，深度不增加
-      if (closeBraces > 0 && openBraces === 0) {
-        depth = Math.max(0, depth - closeBraces);
-      }
-      braceIndents.push(depth);
-      // 更新下一行的基础深度（只在行有 opening brace 时增加）
+      if (closeBraces > 0) braceDepth = Math.max(0, braceDepth - closeBraces);
       if (openBraces > 0) braceDepth += openBraces;
-      if (closeBraces > 0 && openBraces === 0) braceDepth = Math.max(0, braceDepth - closeBraces);
     }
     baseIndents = braceIndents.map(d => (d < 0 ? null : d));
   }
@@ -137,6 +132,8 @@ export function formatSysmlv2Code(
       lastIndent = level;
     }
     if (level < 0) level = 0;
+    const baseIndent = options.baseIndent ?? 0;
+    level += baseIndent;
     const indent = indentChar.repeat(level * tabSize);
     result.push(indent + trimmed);
   }
