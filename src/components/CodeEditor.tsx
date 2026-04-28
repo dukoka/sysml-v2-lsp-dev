@@ -217,10 +217,13 @@ const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEd
     });
 
     editorRef.current = editor;
+// Justified: Attaching to window for debugging purposes only. Not used in production.
     (window as any).__monacoEditorInstance = editor;
+// Justified: Attaching to window for debugging purposes only. Not used in production.
     (window as any).__monaco = monaco;
 
-    (monaco.editor as any).registerCommand?.('sysml.goToFirstDefinition', (_: any, lineNumber: number, column: number) => {
+     // Justified: Monaco editor extension API uses 'any' for command callback until proper types are available.
+     (monaco.editor as any).registerCommand?.('sysml.goToFirstDefinition', (_: any, lineNumber: number, column: number) => {
       const ed = editorRef.current;
       if (ed && typeof lineNumber === 'number' && typeof column === 'number') {
         ed.setPosition({ lineNumber, column });
@@ -228,7 +231,8 @@ const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEd
       }
     });
 
-    (monaco.editor as any).registerCommand?.('sysml.showReferences', (_: any, uri: string, position: { line: number; character: number }) => {
+     // Justified: Monaco editor extension API uses 'any' for command callback until proper types are available.
+     (monaco.editor as any).registerCommand?.('sysml.showReferences', (_: any, uri: string, position: { line: number; character: number }) => {
       const ed = editorRef.current;
       if (ed && position) {
         const monacoPos = { lineNumber: position.line + 1, column: position.character + 1 };

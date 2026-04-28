@@ -1,0 +1,36 @@
+[
+  {
+    "type": "section-header",
+    "label": "LSP 客户端"
+  },
+  {
+    "type": "dir",
+    "name": "lsp-client",
+    "label": "LSP 客户端"
+  },
+  {
+    "type": "section-header",
+    "label": "LSP Worker"
+  },
+  {
+    "type": "dir",
+    "name": "lsp-worker",
+    "label": "LSP Worker"
+  },
+  {
+    "type": "section-header",
+    "label": "工具模块"
+  },
+  {
+    "type": "dir",
+    "name": "store",
+    "label": "文件存储"
+  },
+  {
+    "type": "dir",
+    "name": "editor-components",
+    "label": "编辑器组件"
+  },
+  "stdlibLoader",
+  "indexManager"
+]

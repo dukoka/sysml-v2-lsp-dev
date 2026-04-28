@@ -1,0 +1,14 @@
+[
+  "hierarchy-overview",
+  "lsp-overview",
+  "langium-parser",
+  "lsp-worker",
+  "monaco-editor-integration",
+  "react-frontend",
+  {
+    "type": "divider"
+  },
+  "data-flow",
+  "virtual-file-store",
+  "current-vs-sysml-2ls-comparison"
+]

@@ -1,10 +1,14 @@
-// SysMLv2 standard library loader
-// Fetches standard library files from /sysml.library/ and registers them with the LSP worker
+/**
+ * SysMLv2 标准库加载器
+ * 从 /sysml.library/ 目录获取标准库文件并注册到 LSP Worker
+ */
 
 import type SysmlLSPClient from './lspClient';
 
-// All standard library files relative to /sysml.library/
-// Load order: Kernel first (base types), then Systems Library, then Domain Libraries
+/**
+ * 标准库文件列表（相对于 /sysml.library/）
+ * 加载顺序：首先是 Kernel（基础类型），然后是 Systems Library，最后是 Domain Libraries
+ */
 const STDLIB_FILES = [
   // Kernel Semantic Library
   'Kernel Libraries/Kernel Semantic Library/Base.kerml',
@@ -106,14 +110,27 @@ const STDLIB_FILES = [
   'Domain Libraries/Requirement Derivation/RequirementDerivation.sysml',
 ];
 
+/**
+ * 标准库基础 URL
+ */
 const BASE_URL = '/sysml.library/';
+
+/**
+ * 标准库 URI 前缀
+ */
 const STDLIB_URI_PREFIX = 'file:///sysml.library/';
 
+/**
+ * 加载标准库
+ * 异步加载所有标准库文件并注册到 LSP 客户端
+ * @param client - SysML LSP 客户端实例
+ * @returns 包含成功加载数和失败数的对象
+ */
 export async function loadStandardLibrary(client: SysmlLSPClient): Promise<{ loaded: number; failed: number }> {
   let loaded = 0;
   let failed = 0;
 
-  // Fetch in batches of 8 to avoid overwhelming the browser
+  // 分批获取，每批 8 个文件，避免浏览器并发请求过多
   const BATCH = 8;
   for (let i = 0; i < STDLIB_FILES.length; i += BATCH) {
     const batch = STDLIB_FILES.slice(i, i + BATCH);

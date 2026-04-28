@@ -1,0 +1,15 @@
+[
+  { "text": "首页", "link": "/" },
+  { "text": "架构", "link": "/architecture/hierarchy-overview" },
+  {
+    "text": "模块",
+    "items": [
+      { "text": "LSP 客户端", "link": "/modules/lsp-client/index" },
+      { "text": "LSP Worker", "link": "/modules/lsp-worker/index" },
+      { "text": "文件存储", "link": "/modules/store/FileStore-addFile" },
+      { "text": "编辑器", "link": "/modules/editor-components/CodeEditor-initializeEditor" }
+    ]
+  },
+  { "text": "流程", "link": "/flow/execution-flow-overview" },
+  { "text": "使用指南", "link": "/guide/getting-started" }
+]

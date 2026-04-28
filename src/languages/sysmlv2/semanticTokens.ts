@@ -1,7 +1,7 @@
 /**
  * SysMLv2 semantic tokens - AST-driven when parse succeeds, else pattern-based.
  */
-import * as monaco from 'monaco-editor';
+import type * as monaco from 'monaco-editor';
 import type { Namespace, Membership } from '../../grammar/generated/ast.js';
 import { isNamespace, isOwningMembership, isPackage, isPartDefinition, isPortDefinition, isAttributeDefinition, isPartUsage, isPortUsage, isAttributeUsage } from '../../grammar/generated/ast.js';
 import { getNodeRange } from '../../grammar/astUtils.js';

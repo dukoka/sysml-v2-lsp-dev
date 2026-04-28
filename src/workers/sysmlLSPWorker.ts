@@ -1,5 +1,8 @@
-// SysMLv2 Language Server Web Worker
-// Uses vscode-languageserver createConnection + BrowserMessageReader/Writer
+/**
+ * SysMLv2 语言服务器 Web Worker
+ * 使用 vscode-languageserver 的 createConnection + BrowserMessageReader/Writer
+ * 实现 Language Server Protocol (LSP) 的服务器端
+ */
 
 /// <reference lib="webworker" />
 
@@ -42,10 +45,16 @@ import { buildScopeTree } from '../languages/sysmlv2/scope.js';
 import { getNodeRange, getElementNameRange, astToDocumentSymbols, getFoldingRanges, type AstDocumentSymbol } from '../grammar/astUtils.js';
 import { getSemanticTokensDataLsp, semanticTokensLegendLsp } from '../languages/sysmlv2/semanticTokens.js';
 
-// Document store (managed by TextDocuments)
+/**
+ * 文档存储（由 TextDocuments 管理）
+ * 使用 vscode-languageserver 的 TextDocuments 管理打开的文档
+ */
 const documents = new TextDocuments(TextDocument);
 
-// G.1: 多文件索引 — 文档打开/变更时更新，关闭时移除
+/**
+ * 多文件索引管理
+ * 文档打开时添加到索引，变更时更新索引，关闭时从索引移除
+ */
 documents.onDidOpen((e) => {
   updateIndex(e.document.uri, e.document.getText());
 });
@@ -56,6 +65,10 @@ documents.onDidClose((e) => {
   removeFromIndex(e.document.uri);
 });
 
+/**
+ * 用户定义类型的正则表达式模式
+ * 用于从代码中提取用户定义的类型名
+ */
 const DEFINITION_PATTERNS = [
   /^\s*(part|port|action|state|flow|item|connection|constraint|actor|behavior)\s+def\s+(\w+)/,
   /^\s*(requirement)\s+(\w+)/,
@@ -65,6 +78,12 @@ const DEFINITION_PATTERNS = [
   /^\s*package\s+(\w+)/
 ];
 
+/**
+ * 提取用户定义的类型
+ * 扫描代码文本，使用正则表达式提取用户定义的类型名
+ * @param text - 源代码文本
+ * @returns 类型名集合
+ */
 function extractUserDefinedTypes(text: string): Set<string> {
   const types = new Set<string>();
   const lines = text.split('\n');
@@ -79,6 +98,13 @@ function extractUserDefinedTypes(text: string): Set<string> {
   return types;
 }
 
+/**
+ * 计算两个字符串之间的 Levenshtein 距离
+ * 用于拼写检查和相似关键字查找
+ * @param a - 第一个字符串
+ * @param b - 第二个字符串
+ * @returns 编辑距离
+ */
 function levenshteinDistance(a: string, b: string): number {
   const matrix: number[][] = [];
   for (let i = 0; i <= b.length; i++) matrix[i] = [i];
@@ -93,6 +119,12 @@ function levenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
+/**
+ * 查找相似的关键字
+ * 计算输入单词与关键字列表的距离，返回最相似的关键字
+ * @param word - 输入的单词
+ * @returns 最相似的关键字，如果没有则返回 null
+ */
 function findSimilarKeyword(word: string): string | null {
   const maxDistance = 2;
   let similar: string | null = null;
@@ -107,10 +139,17 @@ function findSimilarKeyword(word: string): string | null {
   return similar;
 }
 
+/**
+ * 验证文档
+ * 使用 Langium 解析器进行 AST 诊断，并进行语义验证
+ * @param text - 源代码文本
+ * @param uri - 文档 URI（可选，用于跨文件引用）
+ * @returns 诊断信息数组
+ */
 function validateDocument(text: string, uri?: string): Diagnostic[] {
   const markers: Diagnostic[] = [];
 
-  // AST-based diagnostics from Langium parser (parser/lexer errors)
+  // 基于 AST 的诊断（来自 Langium 解析器的解析/词法错误）
   try {
     const parseResult = parseSysML(text);
     markers.push(...(parseResultToDiagnostics(parseResult) as Diagnostic[]));
@@ -123,6 +162,8 @@ function validateDocument(text: string, uri?: string): Diagnostic[] {
           range: d.range,
           message: d.message
         };
+        // 注意：vscode-languageserver/browser 的 Diagnostic 类型不公开 tags 属性
+        // 这是浏览器版本的已知限制
         if (d.tags?.length) {
           (diag as any).tags = d.tags;
         }
@@ -131,7 +172,7 @@ function validateDocument(text: string, uri?: string): Diagnostic[] {
       return markers;
     }
   } catch {
-    // Parser init or runtime error - continue with regex-based validation
+    // 解析器初始化或运行时错误 - 使用正则表达式验证继续
   }
 
   const lines = text.split('\n');
@@ -263,16 +304,27 @@ function validateDocument(text: string, uri?: string): Diagnostic[] {
   return markers;
 }
 
-// Create connection with Browser transport
+/**
+ * 创建与浏览器传输的连接
+ * 使用 BrowserMessageReader/Writer 在 Web Worker 环境中通信
+ */
+// 注意：BrowserMessageReader/Writer 需要将 self 转换为 any 以适应 WebWorker 上下文
 const reader = new BrowserMessageReader(self as any);
 const writer = new BrowserMessageWriter(self as any);
 const connection = createConnection(ProposedFeatures.all, reader, writer);
 
-// Direct library file indexing (for stdlib loading without TextDocuments overhead)
+/**
+ * 直接加载库文件到索引
+ * 用于加载标准库文件而不经过 TextDocuments 开销
+ */
 connection.onNotification('sysml/indexLibraryFile', (params: { uri: string; content: string }) => {
   updateIndex(params.uri, params.content);
 });
 
+/**
+ * 初始化 LSP 连接
+ * 返回服务器能力，声明支持的 LSP 功能
+ */
 connection.onInitialize((): InitializeResult => ({
   capabilities: {
     textDocumentSync: TextDocumentSyncKind.Full,
@@ -302,10 +354,19 @@ connection.onInitialize((): InitializeResult => ({
   serverInfo: { name: 'SysMLv2 LSP', version: '1.0.0' }
 }));
 
-/** 从 Index 构建 scopeLookupInIndex 所需的 Map<uri, IndexEntryForLookup> */
+/**
+ * 类型定义正则表达式
+ * 用于从文本中提取用户定义的类型名
+ */
 const TYPEDEF_RE = /\b(?:abstract\s+)?(?:part|port|action|state|item|connection|attribute|datatype|struct|classifier|enum\s+def|requirement|constraint|calc|occurrence|metadata)\s+def\s+(\w+)/g;
 const KERML_TYPE_RE = /\b(?:abstract\s+)?(?:datatype|classifier|struct|class|metaclass)\s+(\w+)(?:\s+specializes|\s+\{|;)/g;
 
+/**
+ * 从文本中提取类型名
+ * 使用正则表达式扫描文本，将匹配的类型名添加到集合
+ * @param text - 源代码文本
+ * @param names - 类型名集合（输出参数）
+ */
 function extractNamesFromText(text: string, names: Set<string>): void {
   for (const re of [TYPEDEF_RE, KERML_TYPE_RE]) {
     re.lastIndex = 0;
@@ -316,7 +377,11 @@ function extractNamesFromText(text: string, names: Set<string>): void {
   }
 }
 
-/** Collect type names from all indexed files (AST for user files, regex for stdlib). */
+/**
+ * 从所有索引文件中收集类型名
+ * 用户文件使用 AST，标准库使用正则表达式
+ * @returns 类型名数组
+ */
 function getIndexTypeNames(): string[] {
   const names = new Set<string>();
   for (const [, entry] of getIndex()) {
@@ -339,6 +404,10 @@ function getIndexTypeNames(): string[] {
   return Array.from(names);
 }
 
+/**
+ * 构建用于 scopeLookupInIndex 的索引
+ * @returns URI 到索引项的映射
+ */
 function indexForLookup(): Map<string, IndexEntryForLookup> {
   const map = new Map<string, IndexEntryForLookup>();
   for (const [uri, entry] of getIndex()) {
@@ -574,25 +643,25 @@ connection.onCompletion((params) => {
     return merged;
   };
 
-  // Filter items based on prefix match (use filterText when available, else first word of label)
-  const filterItems = (items: CompletionItem[]): CompletionItem[] => {
-    if (!prefix) return items;
-    return items.filter(item => {
-      const filterKey = item.filterText
-        ?? (typeof item.label === 'string' ? item.label : item.label.label);
-      // match against the first word of the filter key (handles multi-word labels)
-      const firstWord = filterKey.split(/\s+/)[0].toLowerCase();
-      return firstWord.startsWith(prefix) || filterKey.toLowerCase().startsWith(prefix);
-    });
-  };
+   // Filter items based on prefix match (use filterText when available, else first word of label)
+   const filterItems = (items: CompletionItem[]): CompletionItem[] => {
+     if (!prefix) return items;
+     return items.filter(item => {
+       const filterKey = item.filterText
+         ?? (typeof item.label === 'string' ? item.label : (item.label as { label: string }).label);
+       // match against the first word of the filter key (handles multi-word labels)
+       const firstWord = filterKey.split(/\s+/)[0].toLowerCase();
+       return firstWord.startsWith(prefix) || filterKey.toLowerCase().startsWith(prefix);
+     });
+   };
 
-  // Attach a textEdit to each item so Monaco replaces exactly the typed prefix,
-  // preventing cursor-jump caused by Monaco's own word-boundary guessing.
-  const withTextEdit = (item: CompletionItem): CompletionItem => {
-    if (item.textEdit) return item;  // already set, leave as-is
-    const newText = item.insertText ?? (typeof item.label === 'string' ? item.label : item.label.label);
-    return { ...item, textEdit: { range: replaceRange, newText } };
-  };
+   // Attach a textEdit to each item so Monaco replaces exactly the typed prefix,
+   // preventing cursor-jump caused by Monaco's own word-boundary guessing.
+   const withTextEdit = (item: CompletionItem): CompletionItem => {
+     if (item.textEdit) return item;  // already set, leave as-is
+     const newText = item.insertText ?? (typeof item.label === 'string' ? item.label : (item.label as { label: string }).label);
+     return { ...item, textEdit: { range: replaceRange, newText } };
+   };
 
   switch (ctx) {
     case 'type': {

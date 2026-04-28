@@ -1,0 +1,53 @@
+[
+  "constructor",
+  "initialize",
+  "setDocumentUri",
+  "openDocument",
+  "closeDocument",
+  "updateDocument",
+  {
+    "type": "divider"
+  },
+  {
+    "type": "section-header",
+    "label": "查询操作"
+  },
+  "getCompletion",
+  "getHover",
+  "getDefinition",
+  "getReferences",
+  "getRename",
+  "getTypeDefinition",
+  "getDocumentHighlights",
+  {
+    "type": "divider"
+  },
+  {
+    "type": "section-header",
+    "label": "诊断与符号"
+  },
+  "getDiagnostics",
+  "getG4Diagnostics",
+  "getDocumentSymbols",
+  "getWorkspaceSymbols",
+  "getSemanticTokens",
+  {
+    "type": "divider"
+  },
+  {
+    "type": "section-header",
+    "label": "其他操作"
+  },
+  "getFoldingRanges",
+  "getCodeLens",
+  "getCodeActions",
+  "getSignatureHelp",
+  "getInlayHints",
+  "getSelectionRanges",
+  "getLinkedEditingRanges",
+  "formatDocument",
+  "formatDocumentRange",
+  "getOnTypeFormatting",
+  "loadLibraryFile",
+  "getDebugIndexTypes"
+]

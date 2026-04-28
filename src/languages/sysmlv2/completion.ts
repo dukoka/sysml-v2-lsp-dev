@@ -4,37 +4,42 @@ import { extractAstSymbols, type AstSymbols } from '../../grammar/astSymbols.js'
 import { buildScopeTree, getScopeAtPosition } from './scope.js';
 import { isNamespace } from '../../grammar/generated/ast.js';
 
-// ============ Keyword Categories ============
+/**
+ * 代码补全模块
+ * 提供 SysMLv2 代码的自动补全功能，包括关键字、类型、函数等
+ */
 
-// Structural keywords - start definitions
+// ============ 关键字分类 ============
+
+// 结构关键字 - 开始定义
 const STRUCTURAL_KEYWORDS = [
   'part', 'port', 'action', 'state', 'flow', 'item', 'connection', 
   'constraint', 'requirement', 'actor', 'behavior', 'interface'
 ];
 
-// Flow control keywords - only in behavior blocks
+// 流程控制关键字 - 仅在行为块中使用
 const FLOW_CONTROL_KEYWORDS = ['if', 'else', 'while', 'for', 'return', 'switch', 'case'];
 
-// Type keywords
+// 类型关键字
 const TYPE_KEYWORDS = ['enum', 'struct', 'datatype', 'union'];
 
-// Modifier keywords
+// 修饰符关键字
 const MODIFIER_KEYWORDS = ['abstract', 'specialization', 'readonly', 'public', 'private', 'protected'];
 
-// Membership keywords - inside definitions
+// 成员关键字 - 在定义内部使用
 const MEMBERSHIP_KEYWORDS = ['owned', 'exhibits', 'subject', 'redefines', 'references', 'subsets', 'specializes'];
 
-// Relationship operators (like :, :>, ::>, etc.)
+// 关系运算符
 const RELATIONSHIP_TOKENS = [':', ':>>', ':>', '::>', '::', 'specializes', 'subsets', 'redefines', 'references', 'by', 'conjugates', 'unions', 'intersects', 'differences', 'chains', 'of'];
 
-// Other keywords
+// 其他关键字
 const OTHER_KEYWORDS = [
   'import', 'package', 'library', 'alias', 'def', 'definition',
   'end', 'binding', 'succession', 'participation',
   'metadata', 'snapshot', 'stage', 'feature', 'in', 'out'
 ];
 
-// Types
+// SysMLv2 内置类型
 const SYSMLV2_TYPES = [
   'Boolean', 'Integer', 'Real', 'String', 'Natural', 'Positive',
   'Magnitude', 'Vector', 'Matrix', 'Array',
@@ -50,23 +55,34 @@ const SYSMLV2_TYPES = [
   'Variant', 'Configuration', 'SysMLPackage'
 ];
 
-// Built-in functions
+// 内置函数
 const BUILTIN_FUNCTIONS = [
   'assert', 'println', 'print', 'toString',
   'toInteger', 'toReal', 'toBoolean', 'size', 'empty',
   'isEmpty', 'first', 'last', 'append', 'prepend'
 ];
 
+/**
+ * Monaco Editor 补全项类型
+ */
 const CompletionItemKind = monaco.languages.CompletionItemKind;
 
-// ============ Improved Context Detection ============
+// ============ 改进的上下文检测 ============
 
+/**
+ * 补全上下文
+ */
 interface CompletionContext {
   type: string;
   currentWord: string;
   braceDepth: number;
 }
 
+/**
+ * 获取最后一个单词
+ * @param text - 文本内容
+ * @returns 最后一个单词
+ */
 function getLastWord(text: string): string {
   // Handle quoted strings
   const lastQuote = Math.max(text.lastIndexOf('"'), text.lastIndexOf("'"));

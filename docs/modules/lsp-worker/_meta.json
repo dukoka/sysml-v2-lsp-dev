@@ -1,0 +1,30 @@
+[
+  {
+    "type": "section-header",
+    "label": "初始化"
+  },
+  "onInitialize",
+  "validateDocument",
+  "extractUserDefinedTypes",
+
+  {
+    "type": "section-header",
+    "label": "格式化"
+  },
+  "onRequestTextDocumentFormatting",
+  "onRequestTextDocumentRangeFormatting",
+
+  {
+    "type": "section-header",
+    "label": "自定义请求"
+  },
+  "onRequestSysmlG4Diagnostics",
+  "onRequestSysmlDebugIndexTypes",
+
+  {
+    "type": "section-header",
+    "label": "辅助函数"
+  },
+  "findSimilarKeyword",
+  "levenshteinDistance"
+]

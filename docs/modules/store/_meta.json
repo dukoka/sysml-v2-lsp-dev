@@ -1,0 +1,8 @@
+[
+  "FileStore-addFile",
+  "FileStore-removeFile",
+  "FileStore-openTab",
+  "FileStore-closeTab",
+  "FileStore-setActiveFile",
+  "FileStore-getState"
+]

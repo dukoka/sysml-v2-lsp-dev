@@ -115,10 +115,11 @@ export const registerSysmlv2Language = () => {
   );
 
   // Set tokenizer (Monarch)
-  monaco.languages.setMonarchTokensProvider(
-    SYSMLV2_LANGUAGE_ID,
-    sysmlv2Language as any
-  );
+     // TODO: Investigate proper typing for sysmlv2Language to avoid 'any' cast
+     monaco.languages.setMonarchTokensProvider(
+     SYSMLV2_LANGUAGE_ID,
+     sysmlv2Language as any
+   );
 
   // SemanticTokens — LSP first, then local fallback
   monaco.languages.registerDocumentSemanticTokensProvider(SYSMLV2_LANGUAGE_ID, {
@@ -131,7 +132,8 @@ export const registerSysmlv2Language = () => {
           if (data?.length) return { data: new Uint32Array(data) };
         } catch { /* fall through */ }
       }
-      return sysmlv2SemanticTokensProvider.provideDocumentSemanticTokens(model, null, {} as any);
+       // TODO: Investigate proper typing for empty semantic tokens context
+       return sysmlv2SemanticTokensProvider.provideDocumentSemanticTokens(model, null, {} as any);
     },
     releaseDocumentSemanticTokens: () => {}
   });

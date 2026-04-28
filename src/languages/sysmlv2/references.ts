@@ -60,6 +60,7 @@ function nameFromElementRef(ref: any): string | undefined {
 
 /** 从 Usage 节点获取其类型引用名称（如 part engine : Engine → "Engine"）。 */
 export function getTypeReferenceName(usage: unknown): string | undefined {
+  // TODO: Investigate proper type for 'usage' parameter from Langium AST
   const u = usage as any;
 
   // Path 1: typeRelationships[0].targetRef (FeatureTyping → Relationship → targetRef: ElementReference)
@@ -113,6 +114,7 @@ function rangeToOffsetLocal(text: string, pos: { line: number; character: number
 
 /** 获取 Usage 节点中“类型引用”在文档中的 range（用于判断光标是否在类型名上）。 */
 export function getTypeReferenceRange(usage: unknown, text: string): AstRange | undefined {
+  // TODO: Investigate proper type for 'usage' parameter from Langium AST
   const u = usage as any;
 
   // Path 1: typeRelationships[0].targetRef (FeatureTyping)

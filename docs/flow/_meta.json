@@ -1,0 +1,19 @@
+[
+  "execution-flow-overview",
+  "completion-flow",
+  "diagnostic-flow",
+  "execution-flow-diagrams",
+  {
+    "type": "divider"
+  },
+  "grammar-config",
+  "grammar-mapping",
+  "grammar-extension-and-fix",
+  {
+    "type": "divider"
+  },
+  "tokenizer",
+  "keywords",
+  "symbols",
+  "scope"
+]

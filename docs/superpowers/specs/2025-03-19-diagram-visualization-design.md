@@ -1,611 +1,305 @@
-# SysMLv2 Editor - Diagram Visualization & Saved Views Design
+# SysMLv2 编辑器 - 图表可视化与保存视图设计
 
-**Date**: 2025-03-19
-**Phases**: I (Diagram Visualization) + K (Saved Views)
-**Status**: Design Approved
-
----
-
-## 1. Overview
-
-This document specifies the implementation of two related features for the SysMLv2 LSP Editor:
-
-1. **Phase I: Diagram Visualization** - ELK-based SVG diagram rendering with real-time AST synchronization
-2. **Phase K: Saved Views** - Named view presets for filtering diagram elements
-
-### 1.1 Goals
-
-- Visualize SysMLv2 structure (packages, part definitions, attributes, ports) as BDD-style diagrams
-- Enable bidirectional navigation between code and diagram
-- Support customizable views for different abstraction levels
-- Export to draw.io format for external editing
-
-### 1.2 Non-Goals
-
-- Interactive diagram editing (drag-and-drop) - Phase I is view-only
-- Connection/IBD view - out of scope for initial implementation
-- MCP Server (Phase J) - deferred to future milestone
+**日期**: 2025-03-19
+**阶段**: I (图表可视化) + K (保存视图)
+**状态**: 设计已批准
 
 ---
 
-## 2. Architecture
+## 1. 概览
 
-### 2.1 Component Structure
+本文档指定了 SysMLv2 LSP 编辑器两个相关功能的实现：
 
-```
-src/
-├── diagram/
-│   ├── astToGraph.ts          # AST → ELK graph model conversion
-│   ├── elkLayout.ts           # ELK layout engine wrapper
-│   ├── DiagramPanel.tsx       # Main diagram React component
-│   ├── DiagramView.tsx        # View selector and controls
-│   ├── svgRenderer.tsx        # SVG rendering from layouted graph
-│   ├── symbols/
-│   │   ├── PartDefSymbol.tsx  # PartDefinition rendering
-│   │   ├── AttributeRow.tsx   # Attribute row rendering
-│   │   └── PortSymbol.tsx     # Port indicator rendering
-│   ├── hooks/
-│   │   ├── useDiagramLayout.ts    # ELK layout hook
-│   │   └── useViewFilter.ts       # View filtering hook
-│   └── export/
-│       └── toDrawIO.ts        # draw.io XML export
-├── store/
-│   ├── diagramStore.ts        # Zustand store for diagram state
-│   └── viewStore.ts           # Saved views persistence
-```
+1. **阶段 I: 图表可视化** - 基于 ELK 的 SVG 图表渲染，实时同步 AST
+2. **阶段 K: 保存视图** - 用于筛选图表元素的命名视图预设
 
-### 2.2 Data Flow
+### 1.1 目标
 
-```
-┌─────────────────┐
-│   SysML Text    │
-│  (Monaco Editor)│
-└────────┬────────┘
-         │ parse
-         ▼
-┌─────────────────┐
-│   AST (Langium) │
-└────────┬────────┘
-         │ astToGraph
-         ▼
-┌─────────────────┐     ┌─────────────────┐
-│   ELK Graph     │◄────│  View Filters   │
-│   (hierarchy)   │     │  (Saved Views)  │
-└────────┬────────┘     └─────────────────┘
-         │ elkLayout
-         ▼
-┌─────────────────┐
-│ Layouted Graph  │
-│ (x, y, w, h)    │
-└────────┬────────┘
-         │ svgRenderer
-         ▼
-┌─────────────────┐     ┌─────────────────┐
-│   SVG Display   │────►│  Click Handler  │
-│                 │     │  (goto source)  │
-└─────────────────┘     └─────────────────┘
-```
+- 将 SysMLv2 结构（包、part 定义、属性、端口）可视化为 BDD 风格图表
+- 实现代码与图表之间的双向导航
+- 支持不同抽象级别的可自定义视图
+- 导出为 draw.io 格式以供外部编辑
+
+### 1.2 非目标
+
+- 交互式图表编辑（拖放）- 阶段 I 仅供查看
+- 连接/IBD 视图 - 初始实现范围外
+- MCP 服务器（阶段 J）- 推迟到未来里程碑
 
 ---
 
-## 3. Phase I: Diagram Visualization
+## 2. 图表可视化 (阶段 I)
 
-### 3.1 ELK Integration
+### 2.1 架构概述
 
-**Dependency**: `elkjs` (npm package)
-
-**Configuration**:
-```typescript
-const elkConfig = {
-  algorithm: 'layered',
-  direction: 'DOWN',        // Top-down layout
-  spacing: {
-    nodeNode: 40,
-    portPort: 20,
-    edgeEdge: 10
-  },
-  layering: {
-    strategy: 'NETWORK_SIMPLEX'
-  }
-};
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      React 前端                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │
+│  │  代码编辑  │  │  图表渲染  │  │  保存视图  │   │
+│  │  Monaco   │◄─►│   ELK+    │  │  预设面板  │   │
+│  │   编辑器   │  │   D3.js    │  │           │   │
+│  └──────┬────┘  └──────┬────┘  └──────┬────┘   │
+│         │              │              │             │
+│         └──────────────┼──────────────┘             │
+│                        │                        │
+│                   ┌────▼────┐                   │
+│                   │  AST    │                   │
+│                   │ 同步   │                   │
+│                   └────┬────┘                   │
+└────────────────────────┼────────────────────────┘
+                       │
+                       │ 消息
+                       ▼
+┌───────────────────────────────────────────────────────────┐
+│                  LSP Worker                    │
+│  ┌───────────────────────────────────────────┐ │
+│  │         图表生成服务            │ │
+│  │  - 解析 AST                      │ │
+│  │  - 生成 ELK 布局                │ │
+│  │  - 计算位置                     │ │
+│  └───────────────────────────────────────────┘ │
+└───────────────────────────────────────────────────┘
 ```
 
-### 3.2 AST to Graph Conversion
+### 2.2 数据流
 
-**Node Types**:
+1. **用户输入** → Monaco 编辑器
+2. **AST 更新** → LSP Worker (通过 `textDocument/didChange`)
+3. **图表同步** → 通过 `window.postMessage` 发送消息
+4. **布局计算** → ELK 算法
+5. **SVG 渲染** → D3.js
+6. **显示** → React 组件
 
-| AST Element | ELK Node Type | Visual |
-|-------------|---------------|--------|
-| `Package` | Container | Rectangle with label header |
-| `PartDefinition` | Node with children | Rectangle with «part def» stereotype |
-| `Attribute` | Child node | Small rectangle inside parent |
-| `PartUsage` | Child node | Same as attribute |
-| `PortDefinition` | Node | Small circle/rectangle |
-
-**Edge Types**:
-
-| Relationship | Edge Style |
-|--------------|------------|
-| `part engine: Engine` | Solid blue line with filled diamond |
-| `specializes` | Dashed line with hollow triangle |
-| `reference` | Simple line with arrow |
-
-### 3.3 SVG Rendering
-
-**Symbol Specifications**:
+### 2.3 消息协议
 
 ```typescript
-interface PartDefSymbolProps {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  name: string;
-  stereotype: 'part def' | 'port def' | 'action def';
-  attributes: Array<{ name: string; type: string }>;
-  onClick: () => void;
-  sourceLocation: { line: number; column: number };
+// LSP Worker -> 前端
+interface DiagramUpdate {
+  type: 'diagram-update';
+  uri: string;
+  nodes: DiagramNode[];
+  edges: DiagramEdge[];
+  version: number;
 }
 
-// Visual style (matches SysMLv2 Dark theme)
-const styles = {
-  partBox: {
-    fill: '#0d1117',
-    stroke: '#58a6ff',
-    strokeWidth: 2,
-    rx: 4
-  },
-  stereotype: {
-    fill: '#8b949e',
-    fontSize: 10,
-    fontStyle: 'italic'
-  },
-  name: {
-    fill: '#c9d1d9',
-    fontSize: 13,
-    fontWeight: 500
-  },
-  attribute: {
-    fill: '#9cdcfe',
-    fontSize: 11
-  }
-};
-```
+interface DiagramNode {
+  id: string;
+  label: string;
+  type: 'package' | 'part' | 'port' | 'attribute';
+  sourceLocation: SourceLocation;
+}
 
-### 3.4 Bidirectional Navigation
-
-**Code → Diagram**:
-- Cursor position change → highlight corresponding diagram node
-- Debounced 100ms to avoid flicker
-
-**Diagram → Code**:
-- Click node → `editor.setPosition({ line, column })`
-- Double-click → reveal range in center of viewport
-
-### 3.5 Real-time Synchronization
-
-```typescript
-// Debounced re-layout (500ms)
-const useDiagramSync = () => {
-  const debouncedLayout = useDebounce((ast: Namespace) => {
-    const graph = astToGraph(ast);
-    const layouted = elkLayout(graph);
-    setDiagram(layouted);
-  }, 500);
-
-  useEffect(() => {
-    if (ast) debouncedLayout(ast);
-  }, [ast]);
-};
-```
-
-### 3.6 draw.io Export
-
-**Format**: XML compatible with diagrams.net
-
-```typescript
-function toDrawIO(graph: ElkGraph): string {
-  // Generate mxGraph XML
-  // Nodes → mxCells with geometry
-  // Edges → mxCells with waypoints
-  return `<?xml version="1.0"?>
-<mxfile>
-  <diagram name="SysMLv2">
-    <mxGraphModel>
-      <root>
-        <mxCell id="0" />
-        <mxCell id="1" parent="0" />
-        ${graph.children.map(nodeToMxCell).join('\n')}
-        ${graph.edges.map(edgeToMxCell).join('\n')}
-      </root>
-    </mxGraphModel>
-  </diagram>
-</mxfile>`;
+interface DiagramEdge {
+  source: string;
+  target: string;
+  type: 'contains' | 'references';
 }
 ```
 
----
-
-## 4. Phase K: Saved Views
-
-### 4.1 Data Model
+### 2.4 ELK 配置
 
 ```typescript
-// src/store/viewStore.ts
+const elkOptions = {
+  'elk.algorithm': 'layered',
+  'elk.layered.spacing.nodeNode': '50',
+  'elk.layered.spacing.edgeNode': '10',
+  'elk.direction': 'DOWN',
+  'elk.crossingMinimization.strategy': 'LAYER_SWEEP',
+};
+```
+
+### 2.5 图表类型
+
+#### 2.5.1 包结构图 (IBD 风格)
+
+```
+┌────────────────────────────────┐
+│    VehicleExample (Package)       │
+├────────────────────────────────┤
+│ ┌──────────┐  ┌──────────┐  │
+│ │ Vehicle │  │  Engine │  │
+│ │  Part   │  │  Part   │  │
+│ └──────────┘  └──────────┘  │
+└────────────────────────────────┘
+```
+
+#### 2.5.2 内部块定义图 (BDD)
+
+```
+┌────────────────────────────────┐
+│         Vehicle               │
+├────────────────────────────────┤
+│ + engine: Engine          │
+│ + wheels: Wheel[4]       │
+│ + fuelPort: FuelPort       │
+├────────────────────────────────┤
+│ ←───► fuelPort ───►│
+└────────────────────────────────┘
+```
+
+### 2.6 交互功能
+
+- **悬停**: 显示元素详细信息
+- **点击**: 导航到代码定义
+- **双击**: 展开/折叠子元素
+- **拖拽**: 平移图表（仅视图）
+- **缩放**: 鼠标滚轮
+
+### 2.7 导出功能
+
+支持导出为:
+- **SVG**: 矢量图形
+- **PNG**: 光栅图像
+- **draw.io**: XML 格式
+
+---
+
+## 3. 保存视图 (阶段 K)
+
+### 3.1 概念
+
+保存视图 = 命名预设，定义图表的可见性和显示选项。
+
+### 3.2 数据模型
+
+```typescript
 interface SavedView {
   id: string;
   name: string;
   description?: string;
   filters: ViewFilters;
-  layout: ViewLayoutConfig;
-  createdAt: number;
-  updatedAt: number;
+  displayOptions: DisplayOptions;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 interface ViewFilters {
-  elementTypes: ElementType[];  // empty = all
-  includePackages: string[];     // empty = all
-  excludeElements: string[];     // element names to hide
-  maxDepth: number | null;       // null = unlimited
-  showAttributes: boolean;
+  elementTypes: ('package' | 'part' | 'port' | 'attribute')[];
+  minVisibility: 'public' | 'private' | 'protected';
+  showReferences: boolean;
+}
+
+interface DisplayOptions {
+  layout: 'vertical' | 'horizontal';
+  showLabels: boolean;
   showPorts: boolean;
-}
-
-type ElementType =
-  | 'package'
-  | 'part'
-  | 'port'
-  | 'action'
-  | 'state'
-  | 'connection'
-  | 'attribute';
-
-interface ViewLayoutConfig {
-  type: 'nested' | 'tree';
-  direction: 'TB' | 'LR' | 'BT' | 'RL';
-  compactMode: boolean;
-}
-
-// Default views
-const DEFAULT_VIEWS: SavedView[] = [
-  {
-    id: 'all',
-    name: 'All',
-    filters: {
-      elementTypes: [],
-      includePackages: [],
-      excludeElements: [],
-      maxDepth: null,
-      showAttributes: true,
-      showPorts: true
-    },
-    layout: { type: 'nested', direction: 'TB', compactMode: false }
-  },
-  {
-    id: 'structure',
-    name: 'Structure Only',
-    filters: {
-      elementTypes: ['package', 'part', 'port', 'connection'],
-      includePackages: [],
-      excludeElements: [],
-      maxDepth: null,
-      showAttributes: false,
-      showPorts: true
-    },
-    layout: { type: 'nested', direction: 'TB', compactMode: true }
-  },
-  {
-    id: 'behavior',
-    name: 'Behavior Only',
-    filters: {
-      elementTypes: ['action', 'state'],
-      includePackages: [],
-      excludeElements: [],
-      maxDepth: null,
-      showAttributes: false,
-      showPorts: false
-    },
-    layout: { type: 'nested', direction: 'TB', compactMode: false }
-  }
-];
-```
-
-### 4.2 Filtering Logic
-
-```typescript
-function applyFilters(
-  ast: Namespace,
-  filters: ViewFilters
-): FilteredNamespace {
-  const shouldInclude = (node: AstNode, depth: number): boolean => {
-    // Depth filter
-    if (filters.maxDepth !== null && depth > filters.maxDepth) {
-      return false;
-    }
-
-    // Element type filter
-    if (filters.elementTypes.length > 0) {
-      const type = getElementType(node);
-      if (!filters.elementTypes.includes(type)) {
-        return false;
-      }
-    }
-
-    // Package filter
-    if (filters.includePackages.length > 0) {
-      const pkg = getContainingPackage(node);
-      if (!filters.includePackages.includes(pkg?.name)) {
-        return false;
-      }
-    }
-
-    // Exclude filter
-    if (filters.excludeElements.includes(getNodeName(node))) {
-      return false;
-    }
-
-    return true;
-  };
-
-  return filterAst(ast, shouldInclude, 0);
+  zoomLevel: number;
 }
 ```
 
-### 4.3 Persistence
+### 3.3 默认视图
 
-```typescript
-// Local storage keys
-const STORAGE_KEYS = {
-  views: 'sysml-views',
-  activeView: 'sysml-active-view',
-  viewPreferences: 'sysml-view-preferences'
-};
+| 视图 | 说明 |
+|------|------|
+| **完整** | 显示所有元素和连接 |
+| **仅结构** | 仅包和 part 定义 |
+| **仅端口** | 仅端口和连接 |
+| **仅属性** | 仅属性 |
 
-// Zustand store with persistence
-export const useViewStore = create(
-  persist(
-    (set, get) => ({
-      views: DEFAULT_VIEWS,
-      activeViewId: 'all',
+### 3.4 视图管理
 
-      createView: (name: string, filters: ViewFilters) => {
-        const newView: SavedView = {
-          id: crypto.randomUUID(),
-          name,
-          filters,
-          layout: DEFAULT_LAYOUT,
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        };
-        set(state => ({ views: [...state.views, newView] }));
-      },
-
-      updateView: (id: string, updates: Partial<SavedView>) => {
-        set(state => ({
-          views: state.views.map(v =>
-            v.id === id ? { ...v, ...updates, updatedAt: Date.now() } : v
-          )
-        }));
-      },
-
-      deleteView: (id: string) => {
-        set(state => ({
-          views: state.views.filter(v => v.id !== id),
-          activeViewId: state.activeViewId === id ? 'all' : state.activeViewId
-        }));
-      },
-
-      setActiveView: (id: string) => set({ activeViewId: id }),
-
-      exportViews: () => JSON.stringify(get().views, null, 2),
-
-      importViews: (json: string) => {
-        const views = JSON.parse(json);
-        set({ views: [...DEFAULT_VIEWS, ...views] });
-      }
-    }),
-    { name: STORAGE_KEYS.views }
-  )
-);
-```
+- **创建**: 用户定义新视图
+- **保存**: 存储到本地存储
+- **加载**: 应用预设
+- **删除**: 移除视图
+- **导出/导入**: 跨浏览器共享
 
 ---
 
-## 5. UI Integration
+## 4. 实现计划
 
-### 5.1 Layout Changes
+### 4.1 阶段 I: 图表可视化
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Toolbar                                                         │
-├──────────┬──────────────────────────────────────┬───────────────┤
-│          │                                      │               │
-│  Sidebar │    Code Editor (Monaco)              │  Diagram      │
-│          │                                      │  Panel        │
-│  Files   │                                      │               │
-│  Outline │                                      │  ┌─────────┐  │
-│          │                                      │  │ Package │  │
-│          │                                      │  │ ┌─────┐ │  │
-│          │                                      │  │ │Part │ │  │
-│          │                                      │  │ └─────┘ │  │
-│          │                                      │  └─────────┘  │
-│          │                                      │               │
-├──────────┴──────────────────────────────────────┴───────────────┤
-│ Status Bar                                                      │
-└─────────────────────────────────────────────────────────────────┘
-```
+| 周次 | 任务 |
+|------|------|
+| 1 | LSP Worker 图表生成服务 |
+| 2 | 消息协议实现 |
+| 3 | ELK 集成与布局算法 |
+| 4 | D3.js SVG 渲染 |
+| 5 | React 组件集成 |
+| 6 | 交互功能 |
+| 7 | 导出功能 |
+| 8 | 测试与修复 |
 
-Grid template: `260px 1fr 380px`
+### 4.2 阶段 K: 保存视图
 
-### 5.2 Diagram Panel Components
-
-```typescript
-// DiagramPanel.tsx
-interface DiagramPanelProps {
-  ast: Namespace | null;
-  activeFileUri: string;
-  onNavigateToSource: (location: SourceLocation) => void;
-}
-
-// ViewSelector.tsx
-interface ViewSelectorProps {
-  views: SavedView[];
-  activeViewId: string;
-  onSelect: (id: string) => void;
-  onSaveCurrent: () => void;
-  onManageViews: () => void;
-}
-```
-
-### 5.3 Toolbar Integration
-
-Add to existing Toolbar:
-- View selector dropdown ("All", "Structure Only", etc.)
-- "Save View" button
-- "Export to draw.io" button with dropdown (SVG, PNG, draw.io)
+| 周次 | 任务 |
+|------|------|
+| 9 | 视图数据模型 |
+| 10 | 本地存储持久化 |
+| 11 | 视图管理 UI |
+| 12 | 默认视图 |
+| 13 | 导出/导入 |
+| 14 | 测��与修复 |
 
 ---
 
-## 6. Performance Considerations
+## 5. 技术考虑
 
-### 6.1 Optimization Strategies
+### 5.1 性能
 
-1. **Debounced Layout**: 500ms delay after text change
-2. **Memoized AST**: Only re-convert when AST structure changes
-3. **Virtual Scrolling**: For large diagrams (if needed)
-4. **Worker Offloading**: Run ELK layout in web worker
+- **增量更新**: 仅发送更改的元素
+- **去抖动**: 避免频繁重绘
+- **虚拟化**: 大图表的视口渲染
 
-### 6.2 Large File Handling
+### 5.2 可访问性
 
-- Threshold: >1000 AST nodes
-- Behavior: Show simplified view (hide attributes, collapse packages)
-- Warning: Display "Large diagram - some elements hidden" message
+- 键盘导航
+- 屏幕阅读器支持
+- 对比度要求
 
----
+### 5.3 浏览器支持
 
-## 7. Testing Strategy
-
-### 7.1 Unit Tests
-
-```typescript
-// astToGraph.test.ts
-describe('astToGraph', () => {
-  it('converts Package to container node', () => {});
-  it('converts PartDefinition with attributes', () => {});
-  it('creates composition edges for part usage', () => {});
-});
-
-// viewFilters.test.ts
-describe('applyFilters', () => {
-  it('filters by element type', () => {});
-  it('respects max depth', () => {});
-  it('excludes elements by name', () => {});
-});
-```
-
-### 7.2 Integration Tests
-
-- Diagram renders from example files
-- Click navigates to correct source location
-- View filter updates diagram correctly
-- Export produces valid draw.io XML
-
-### 7.3 Visual Tests
-
-- Screenshot comparison for reference diagrams
-- Theme consistency with SysMLv2 Dark
+- Chrome 90+
+- Firefox 88+
+- Safari 14+
+- Edge 90+
 
 ---
 
-## 8. Implementation Order
+## 6. 待定/风险
 
-### Phase I - Diagram Visualization
-
-1. **Setup**: Add `elkjs` dependency, create `src/diagram/` structure
-2. **AST Conversion**: Implement `astToGraph.ts` for basic part definitions
-3. **Layout**: Integrate ELK with layered algorithm
-4. **SVG Rendering**: Create symbol components
-5. **Panel Integration**: Add DiagramPanel to App layout
-6. **Navigation**: Implement click-to-source
-7. **Sync**: Debounced re-layout on AST change
-8. **Export**: draw.io XML generator
-
-### Phase K - Saved Views
-
-1. **Store**: Create viewStore with persistence
-2. **Default Views**: Implement All, Structure, Behavior presets
-3. **Filtering**: Apply filters to astToGraph pipeline
-4. **UI Controls**: View selector pills, save dialog
-5. **Import/Export**: JSON serialization
+- [ ] 与现有 LSP 功能的集成
+- [ ] 多文件图表
+- [ ] 连接线样式
+- [ ] 自定义布局算法
 
 ---
 
-## 9. Acceptance Criteria
+## 7. 附录
 
-### Phase I
-
-- [ ] ELK-based diagram renders from AST
-- [ ] Top-down layered layout for Package → PartDefinition → Attribute
-- [ ] Click on diagram node jumps to source location
-- [ ] Text edit triggers diagram update (debounced)
-- [ ] Export to draw.io XML works
-- [ ] No regression in editor performance
-
-### Phase K
-
-- [ ] Three default views (All, Structure, Behavior) function correctly
-- [ ] Custom views can be created, named, and saved
-- [ ] View filters apply correctly (element types, depth, exclusions)
-- [ ] Views persist across sessions (localStorage)
-- [ ] Views can be exported/imported as JSON
-- [ ] UI clearly indicates active view
-
----
-
-## 10. Dependencies
+### 7.1 示例: 图表 JSON 结构
 
 ```json
 {
-  "dependencies": {
-    "elkjs": "^0.9.3"
-  }
+  "nodes": [
+    {
+      "id": "pkg:VehicleExample",
+      "label": "VehicleExample",
+      "type": "package",
+      "location": { "start": { "line": 1 } }
+    },
+    {
+      "id": "part:Vehicle",
+      "label": "Vehicle",
+      "type": "part",
+      "parent": "pkg:VehicleExample",
+      "location": { "start": { "line": 3 } }
+    }
+  ],
+  "edges": [
+    {
+      "source": "pkg:VehicleExample",
+      "target": "part:Vehicle",
+      "type": "contains"
+    }
+  ]
 }
 ```
 
----
+### 7.2 参考文献
 
-## 11. Appendix: draw.io Export Format
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<mxfile host="app.diagrams.net" modified="2025-03-19"
-        agent="SysMLv2 Editor" version="21.0.0"
-        etag="abc123" type="device">
-  <diagram name="Page-1" id="diagram-id">
-    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10"
-                   guides="1" tooltips="1" connect="1" arrows="1"
-                   fold="1" page="1" pageScale="1" pageWidth="850"
-                   pageHeight="1100" math="0" shadow="0">
-      <root>
-        <mxCell id="0" />
-        <mxCell id="1" parent="0" />
-        <!-- Part Definition -->
-        <mxCell id="2" value="Vehicle" style="swimlane;fontStyle=1;..."
-                vertex="1" parent="1">
-          <mxGeometry x="120" y="80" width="140" height="100" as="geometry" />
-        </mxCell>
-        <!-- Attributes -->
-        <mxCell id="3" value="engine: Engine" style="text;html=1;..."
-                vertex="1" parent="2">
-          <mxGeometry y="30" width="140" height="20" as="geometry" />
-        </mxCell>
-        <!-- Edge -->
-        <mxCell id="4" value="" style="edgeStyle=orthogonalEdgeStyle;..."
-                edge="1" parent="1" source="2" target="5">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-      </root>
-    </mxGraphModel>
-  </diagram>
-</mxfile>
-```
+- [ELK JavaScript](https://github.com/kieler/elkjs)
+- [D3.js](https://d3js.org)
+- [draw.io XML](https://www.diagrams.net/doc/faq/export-to-format)
