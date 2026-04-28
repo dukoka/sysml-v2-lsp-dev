@@ -577,7 +577,9 @@ export const registerSysmlv2Language = () => {
         } catch { /* fall through */ }
       }
       const text = model.getValue();
-      return [{ range: model.getFullModelRange(), text: formatSysmlv2Code(text, options) }];
+      const parseResult = parseSysML(text);
+      const root = parseResult.parserErrors.length === 0 && parseResult.lexerErrors.length === 0 && parseResult.value && isNamespace(parseResult.value) ? parseResult.value : undefined;
+      return [{ range: model.getFullModelRange(), text: formatSysmlv2Code(text, options, root) }];
     }
   });
 
