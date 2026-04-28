@@ -188,6 +188,19 @@ class SysmlLSPClient {
   }
 
   /**
+   * 检查 LSP 服务是否就绪
+   * 用于确认标准库加载和处理完成
+   * @returns 是否就绪
+   */
+  async ping(): Promise<boolean> {
+    try {
+      return await this.sendRequest('sysml/ping', {});
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * 加载库文件
    * 加载标准库文件到索引（不跟踪到 openDocuments）
    * @param uri - 库文件 URI

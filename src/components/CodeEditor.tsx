@@ -1,9 +1,9 @@
-import { useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
+import { useEffect, useRef, useCallback, useImperativeHandle, forwardRef, useState } from 'react';
 import * as monaco from 'monaco-editor';
 import { registerSysmlv2Language, registerSysmlv2Theme, setSysmlv2LspClientGetter, SYSMLV2_LANGUAGE_ID } from '../languages/sysmlv2';
 import { createSysmlv2Validator } from '../languages/sysmlv2/validator';
 import { createSysmlLSPClient } from '../workers/lspClient';
-import { loadStandardLibrary } from '../workers/stdlibLoader';
+import { loadStandardLibrary, STDLIB_FILE_COUNT } from '../workers/stdlibLoader';
 import { isG4ValidationEnabled } from '../grammar/config';
 import type { DiagnosticItem, CursorPosition } from '../store/fileStore';
 
@@ -17,6 +17,11 @@ self.MonacoEnvironment = {
 };
 
 const DIAGNOSTIC_DEBOUNCE_MS = 300;
+const READY_DELAY_MS = 1500;
+const INDEX_POLL_MS = 300;
+const INDEX_MAX_RETRIES = 30;
+const LOAD_PROGRESS_PCT = 0.8;
+const INDEX_PROGRESS_PCT = 0.18;
 
 interface CodeEditorProps {
   fileUri: string | null;
@@ -60,6 +65,12 @@ const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEd
   const mountedRef = useRef(true);
   const currentUriRef = useRef<string | null>(null);
   const contentChangeDisposableRef = useRef<monaco.IDisposable | null>(null);
+  const [loadingProgress, setLoadingProgress] = useState<{
+    loaded: number;
+    total: number;
+    currentFile: string;
+    phase: 'loading' | 'indexing' | 'done';
+  } | null>(null);
 
   const onContentChangeRef = useRef(onContentChange);
   onContentChangeRef.current = onContentChange;
@@ -250,40 +261,87 @@ const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEd
       });
     });
 
-    // LSP init
-    (async () => {
-      try {
-        const worker = new Worker(
-          new URL('../workers/sysmlLSPWorker.ts', import.meta.url),
-          { type: 'module' }
-        );
-        lspWorkerRef.current = worker;
-        const client = createSysmlLSPClient({
-          worker,
-          documentUri: 'file:///sysmlv2/init.sysml',
-        });
-        lspClientRef.current = client;
-        setSysmlv2LspClientGetter(() => lspClientRef.current);
-        await client.initialize();
-        useLspRef.current = true;
-        onLspReadyRef.current?.(true);
-        // Load standard library in background (non-blocking)
-        loadStandardLibrary(client).then(async ({ loaded, failed }) => {
-          if (failed > 0) console.warn(`SysMLv2 stdlib: ${loaded} loaded, ${failed} failed`);
-          else console.log(`SysMLv2 stdlib: ${loaded} files loaded`);
-          const debug = await client.getDebugIndexTypes();
-          console.log(`[debug] index: ${debug.count} type names across ${debug.uris.length} files`);
-          console.log('[debug] sample types:', debug.names.slice(0, 20));
-          if (!debug.names.includes('ScalarValue') && !debug.names.includes('Part')) {
-            console.warn('[debug] stdlib types NOT found in index — regex extraction may have failed');
-            console.log('[debug] all indexed URIs:', debug.uris);
+// LSP init
+      (async () => {
+        try {
+          const worker = new Worker(
+            new URL('../workers/sysmlLSPWorker.ts', import.meta.url),
+            { type: 'module' }
+          );
+          lspWorkerRef.current = worker;
+          const client = createSysmlLSPClient({
+            worker,
+            documentUri: 'file:///sysmlv2/init.sysml',
+          });
+
+          const updateProgress = (phase: 'loading' | 'indexing' | 'done', loaded = 0, currentFile = '') => {
+            setLoadingProgress({ loaded, total: STDLIB_FILE_COUNT, currentFile, phase });
+          };
+
+          // Wait for LSP indexing to complete
+          const waitForLspReady = async () => {
+            const baseProgress = Math.floor(STDLIB_FILE_COUNT * LOAD_PROGRESS_PCT);
+            let pingResolved = false;
+
+            const pingPromise = (async () => {
+              while (!pingResolved) {
+                if (await client.ping()) {
+                  pingResolved = true;
+                  return true;
+                }
+                await new Promise(r => setTimeout(r, INDEX_POLL_MS));
+              }
+              return true;
+            })();
+
+            for (let retries = 0; retries < INDEX_MAX_RETRIES; retries++) {
+              const progress = baseProgress + Math.floor(STDLIB_FILE_COUNT * INDEX_PROGRESS_PCT * ((retries + 1) / INDEX_MAX_RETRIES));
+              updateProgress('indexing', progress, 'Indexing...');
+
+              if (await Promise.race([pingPromise, new Promise(r => setTimeout(r, INDEX_POLL_MS)).then(() => false)])) {
+                return true;
+              }
+            }
+
+            while (!pingResolved) {
+              if (await Promise.race([pingPromise, new Promise(r => setTimeout(r, INDEX_POLL_MS)).then(() => false)])) {
+                return true;
+              }
+            }
+
+            return false;
+          };
+
+          // Track initialization completion
+          lspClientRef.current = client;
+          setSysmlv2LspClientGetter(() => lspClientRef.current);
+          await client.initialize();
+
+          // Load stdlib with progress
+          await loadStandardLibrary(client, (progress) => {
+            const pct = Math.floor(STDLIB_FILE_COUNT * LOAD_PROGRESS_PCT * (progress.loaded / progress.total));
+            updateProgress('loading', pct, '');
+          });
+
+          updateProgress('indexing', Math.floor(STDLIB_FILE_COUNT * LOAD_PROGRESS_PCT), 'Indexing...');
+
+          const lspReady = await waitForLspReady();
+          updateProgress('done', STDLIB_FILE_COUNT, '');
+
+          useLspRef.current = true;
+          onLspReadyRef.current?.(lspReady);
+
+          if (!lspReady) {
+            console.warn('LSP ready check timeout');
+            return;
           }
-        });
-      } catch (e) {
-        console.warn('LSP not available:', e);
-        onLspReadyRef.current?.(false);
-      }
-    })();
+
+          setTimeout(() => setLoadingProgress(null), READY_DELAY_MS);
+        } catch (e) {
+          console.warn('LSP not available:', e);
+          onLspReadyRef.current?.(false);
+        }
+      })();
 
     return () => {
       mountedRef.current = false;
@@ -368,9 +426,60 @@ const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEd
 
   return (
     <div
-      ref={containerRef}
-      style={{ width: '100%', height: '100%', minHeight: '200px' }}
-    />
+      style={{ width: '100%', height: '100%', minHeight: '200px', position: 'relative' }}
+    >
+      <div
+        ref={containerRef}
+        style={{ width: '100%', height: '100%' }}
+      />
+      {loadingProgress && (
+        <div
+          style={{
+            position: 'absolute',
+            left: 0,
+            bottom: 0,
+            padding: '6px 10px',
+            backgroundColor: 'rgba(30, 30, 30, 0.9)',
+            borderRadius: '0 4px 0 0',
+            zIndex: 100,
+            color: '#fff',
+            fontFamily: 'monospace',
+            fontSize: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <div
+            style={{
+              width: '100px',
+              height: '4px',
+              backgroundColor: '#333',
+              borderRadius: '2px',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: loadingProgress.phase === 'done'
+                  ? '100%'
+                  : `${(loadingProgress.loaded / loadingProgress.total) * 100}%`,
+                height: '100%',
+                backgroundColor: loadingProgress.phase === 'done' ? '#4caf50' : '#4fc3f7',
+                transition: 'width 0.15s ease',
+              }}
+            />
+          </div>
+          <span>
+            {loadingProgress.phase === 'done'
+              ? 'Ready'
+              : loadingProgress.phase === 'indexing'
+              ? 'Indexing...'
+              : 'Loading...'}
+          </span>
+        </div>
+      )}
+    </div>
   );
 });
 

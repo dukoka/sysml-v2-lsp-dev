@@ -121,14 +121,34 @@ const BASE_URL = '/sysml.library/';
 const STDLIB_URI_PREFIX = 'file:///sysml.library/';
 
 /**
+ * 标准库文件总数
+ */
+export const STDLIB_FILE_COUNT = STDLIB_FILES.length;
+
+/**
+ * 加载进度回调类型
+ */
+export type LoadProgressCallback = (progress: {
+  loaded: number;
+  total: number;
+  currentFile: string;
+  phase: 'loading' | 'indexing' | 'done';
+}) => void;
+
+/**
  * 加载标准库
  * 异步加载所有标准库文件并注册到 LSP 客户端
  * @param client - SysML LSP 客户端实例
+ * @param onProgress - 进度回调（可选）
  * @returns 包含成功加载数和失败数的对象
  */
-export async function loadStandardLibrary(client: SysmlLSPClient): Promise<{ loaded: number; failed: number }> {
+export async function loadStandardLibrary(
+  client: SysmlLSPClient,
+  onProgress?: LoadProgressCallback
+): Promise<{ loaded: number; failed: number }> {
   let loaded = 0;
   let failed = 0;
+  const total = STDLIB_FILES.length;
 
   // 分批获取，每批 8 个文件，避免浏览器并发请求过多
   const BATCH = 8;
@@ -149,7 +169,31 @@ export async function loadStandardLibrary(client: SysmlLSPClient): Promise<{ loa
         }
       })
     );
+
+    // 通知进度
+    const currentFile = batch[batch.length - 1];
+    onProgress?.({
+      loaded,
+      total,
+      currentFile,
+      phase: 'loading',
+    });
   }
+
+  // 索引阶段
+  onProgress?.({
+    loaded,
+    total,
+    currentFile: 'Building type index...',
+    phase: 'indexing',
+  });
+
+  onProgress?.({
+    loaded,
+    total,
+    currentFile: '',
+    phase: 'done',
+  });
 
   return { loaded, failed };
 }

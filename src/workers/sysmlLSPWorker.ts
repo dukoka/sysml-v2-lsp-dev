@@ -55,11 +55,31 @@ const documents = new TextDocuments(TextDocument);
  * 多文件索引管理
  * 文档打开时添加到索引，变更时更新索引，关闭时从索引移除
  */
+let pendingDocumentCount = 0;
+let processingQueueSize = 0;
+let pendingNotificationCount = 0;
+
 documents.onDidOpen((e) => {
+  processingQueueSize++;
+  pendingDocumentCount++;
   updateIndex(e.document.uri, e.document.getText());
+  pendingDocumentCount--;
+  pendingNotificationCount++;
+  setTimeout(() => {
+    pendingNotificationCount--;
+    processingQueueSize--;
+  }, 10);
 });
 documents.onDidChangeContent((e) => {
+  processingQueueSize++;
+  pendingDocumentCount++;
   updateIndex(e.document.uri, e.document.getText());
+  pendingDocumentCount--;
+  pendingNotificationCount++;
+  setTimeout(() => {
+    pendingNotificationCount--;
+    processingQueueSize--;
+  }, 10);
 });
 documents.onDidClose((e) => {
   removeFromIndex(e.document.uri);
@@ -318,8 +338,22 @@ const connection = createConnection(ProposedFeatures.all, reader, writer);
  * 用于加载标准库文件而不经过 TextDocuments 开销
  */
 connection.onNotification('sysml/indexLibraryFile', (params: { uri: string; content: string }) => {
+  processingQueueSize++;
+  pendingDocumentCount++;
+  pendingNotificationCount++;
   updateIndex(params.uri, params.content);
+  pendingDocumentCount--;
+  setTimeout(() => {
+    pendingNotificationCount--;
+    processingQueueSize--;
+  }, 10);
 });
+
+/**
+ * Ping 请求
+ * 返回服务就绪状态（当没有待处理文档时返回 true）
+ */
+connection.onRequest('sysml/ping', (): boolean => pendingNotificationCount === 0);
 
 /**
  * 初始化 LSP 连接
