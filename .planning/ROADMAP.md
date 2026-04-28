@@ -32,7 +32,7 @@
 2. Format Selection 保持正常
 3. Format Range 功能正常
 **Plans**: 1 plan
-- [ ] B1-格式化改进-PLAN.md — 改进代码格式化功能
+- [ ] B-01-验证-PLAN.md — 验证代码格式化改进是否正确工作
 
 ---
 
