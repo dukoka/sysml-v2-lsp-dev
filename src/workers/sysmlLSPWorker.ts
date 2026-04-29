@@ -498,14 +498,6 @@ connection.onRequest('textDocument/formatting', (params: { textDocument: { uri: 
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return [];
   const text = doc.getText();
-  const parseResult = parseSysML(text);
-  const root =
-    parseResult.parserErrors.length === 0 &&
-    parseResult.lexerErrors.length === 0 &&
-    parseResult.value &&
-    isNamespace(parseResult.value)
-      ? parseResult.value
-      : undefined;
   const formatted = formatSysmlv2Code(text, {
     tabSize: params.options?.tabSize ?? 2,
     insertSpaces: params.options?.insertSpaces ?? true
@@ -523,10 +515,19 @@ connection.onRequest('textDocument/rangeFormatting', (params: { textDocument: { 
   const startOffset = doc.offsetAt(params.range.start);
   const endOffset = doc.offsetAt(params.range.end);
   const rangeText = fullText.substring(startOffset, endOffset);
-  // Range formatting uses brace-depth only (AST ranges refer to full document)
+
+  // 计算选中范围之前的 base indent
+  let baseIndent = 0;
+  const beforeText = fullText.substring(0, startOffset);
+  for (const c of beforeText) {
+    if (c === '{') baseIndent++;
+    else if (c === '}') baseIndent = Math.max(0, baseIndent - 1);
+  }
+
   const formatted = formatSysmlv2Code(rangeText, {
     tabSize: params.options?.tabSize ?? 2,
-    insertSpaces: params.options?.insertSpaces ?? true
+    insertSpaces: params.options?.insertSpaces ?? true,
+    baseIndent
   });
   return [{ range: params.range, newText: formatted }];
 });
