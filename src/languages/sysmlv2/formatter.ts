@@ -86,10 +86,12 @@ export function formatSysmlv2Code(
   const baseIndent = options.baseIndent ?? 0;
   let formatted: string;
   if (baseIndent > 0) {
-    // For range formatting, add base indent after each newline
+    // baseIndent is brace depth, convert to spaces
+    const baseIndentSpaces = indentChar.repeat(baseIndent * tabSize);
     const lines = formatSysML(text, indent).split('\n');
-    const result = lines.map(line => indentChar.repeat(baseIndent) + line).join('\n');
-    formatted = result;
+    const result = lines.map(line => baseIndentSpaces + line).join('\n');
+    // Remove trailing newline for range formatting
+    formatted = result.replace(/\n$/, '');
   } else {
     formatted = formatSysML(text, indent);
   }
